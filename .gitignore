@@ -1,0 +1,61 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Weights, models & heavy binaries (keep lightweight artifacts only)
+*.pt
+*.pth
+*.onnx
+*.pte
+*.xmodel
+*.bin
+weights/
+runs/
+
+# Large test images & RAW defect dumps
+data/operator_ingest_queue/raw_dumps/
+*.raw
+*.tar.gz
+*.zip
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Telemetry & runtime logs
+*.log
+telemetry_output/

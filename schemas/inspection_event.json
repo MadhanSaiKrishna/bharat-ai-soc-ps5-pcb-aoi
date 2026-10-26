@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InspectionEvent",
+  "description": "Standardized inter-module contract for Closed-Loop Multi-Tier Edge AOI (PS5)",
+  "type": "object",
+  "required": [
+    "board_id",
+    "checkpoint",
+    "alignment",
+    "bga_zone_detected",
+    "bga_checklist_passed",
+    "defects",
+    "historical_defect_context",
+    "operator_ingestion"
+  ],
+  "properties": {
+    "board_id": {
+      "type": "string",
+      "description": "Unique identifier for the board under inspection"
+    },
+    "checkpoint": {
+      "type": "string",
+      "enum": [
+        "CHECKPOINT_1_SPI",
+        "CHECKPOINT_2_PLACEMENT",
+        "CHECKPOINT_WIRE_AND_PLACEMENT",
+        "CHECKPOINT_FINAL_PRE_REFLOW"
+      ],
+      "description": "Inspection stage checkpoint"
+    },
+    "alignment": {
+      "type": "object",
+      "required": [
+        "status",
+        "dx_mm",
+        "dy_mm",
+        "dtheta_deg",
+        "tolerance_dx_mm",
+        "tolerance_dtheta_deg"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "WARNING"]
+        },
+        "dx_mm": { "type": "number" },
+        "dy_mm": { "type": "number" },
+        "dtheta_deg": { "type": "number" },
+        "tolerance_dx_mm": { "type": "number" },
+        "tolerance_dtheta_deg": { "type": "number" }
+      }
+    },
+    "bga_zone_detected": { "type": "boolean" },
+    "bga_checklist_passed": { "type": "boolean" },
+    "defects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "defect_id",
+          "category",
+          "type",
+          "component_ref",
+          "confidence",
+          "obb",
+          "severity"
+        ],
+        "properties": {
+          "defect_id": { "type": "integer" },
+          "category": {
+            "type": "string",
+            "enum": ["WIRE_BOND", "SMT_SPI", "SMT_PLACEMENT", "OPERATOR_FLAGGED"]
+          },
+          "type": {
+            "type": "string",
+            "description": "Defect classification (e.g., WIRE_SWEEP_SHORT, LIFTED_HEEL, SKEWED_PASSIVE, SOLDER_BRIDGE, STARVED_PASTE)"
+          },
+          "component_ref": { "type": "string" },
+          "confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "obb": {
+            "type": "object",
+            "required": ["xc", "yc", "width", "height", "angle_deg"],
+            "properties": {
+              "xc": { "type": "number" },
+              "yc": { "type": "number" },
+              "width": { "type": "number" },
+              "height": { "type": "number" },
+              "angle_deg": { "type": "number" }
+            }
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+          }
+        }
+      }
+    },
+    "historical_defect_context": {
+      "type": "object",
+      "required": ["rolling_window_count", "recurring_defect_counts", "localized_hotspot"],
+      "properties": {
+        "rolling_window_count": { "type": "integer" },
+        "recurring_defect_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "localized_hotspot": { "type": ["string", "null"] }
+      }
+    },
+    "operator_ingestion": {
+      "type": "object",
+      "required": ["flagged_new_anomaly", "operator_label", "embedding_vector_id"],
+      "properties": {
+        "flagged_new_anomaly": { "type": "boolean" },
+        "operator_label": { "type": ["string", "null"] },
+        "embedding_vector_id": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

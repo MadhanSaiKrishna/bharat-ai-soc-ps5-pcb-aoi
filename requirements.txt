@@ -1,0 +1,30 @@
+# Core computer vision & oriented object detection
+torch>=2.2.0
+torchvision>=0.17.0
+ultralytics>=8.2.0
+opencv-python>=4.9.0
+albumentations>=1.4.0
+
+# Gerber CAD processing & rendering
+pygerber>=2.1.0
+
+# GUI & visualization
+PyQt6>=6.6.0
+matplotlib>=3.8.0
+Pillow>=10.2.0
+
+# Edge Vector Index & Active Learning
+faiss-cpu>=1.8.0
+
+# Data schemas, configuration & serialization
+pydantic>=2.6.0
+pyyaml>=6.0.1
+jsonschema>=4.21.0
+
+# PDF & CSV reporting
+reportlab>=4.1.0
+
+# Optional / Target-specific:
+# ExecuTorch runtime on Arm/x86 (follow official installation for your target platform):
+# pip install --pre executorch --index-url https://download.pytorch.org/whl/nightly/cpu
+# onnxruntime>=1.17.0

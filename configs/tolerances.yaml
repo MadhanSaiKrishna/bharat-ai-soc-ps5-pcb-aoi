@@ -1,0 +1,40 @@
+# Alignment and Fiducial Tolerances for Multi-Tier AOI
+tolerances:
+  standard:
+    name: "Standard SMT (≥ 0805, SOIC, Pitch ≥ 1.0mm)"
+    dx_mm: 0.20
+    dy_mm: 0.20
+    dtheta_deg: 0.50
+
+  fine_pitch:
+    name: "Fine-Pitch SMT (0402/0201, QFP, Pitch < 0.65mm)"
+    dx_mm: 0.10
+    dy_mm: 0.10
+    dtheta_deg: 0.30
+
+  bga_die:
+    name: "BGA & Silicon Die Placement (0.65mm / 0.5mm / 0.4mm Pitch)"
+    dx_mm: 0.15
+    dy_mm: 0.15
+    dtheta_deg: 0.20
+
+  wire_bond:
+    name: "Micro-Electronic Wire Bonding (< 50um Wire Diameter)"
+    dx_mm: 0.05
+    dy_mm: 0.05
+    dtheta_deg: 0.10
+
+# BGA 4-Point Checklist Verification Items
+bga_checklist_items:
+  - id: "ball_oxidation_check"
+    title: "Ball Oxidation & Contamination Check"
+    description: "Visual verification of BGA sphere reflectivity; no dull oxide film or foreign debris."
+  - id: "flux_coverage"
+    title: "Uniform Flux / Tacky Gel Application"
+    description: "Consistent flux dipping or stencil print thickness across all substrate pad sites."
+  - id: "pad_paste_volume"
+    title: "Substrate Pad Paste Volume Consistency"
+    description: "SPI volume calculation within 80%–120% nominal paste height; zero aperture bridging."
+  - id: "support_pin_confirmation"
+    title: "Backside Board Support Pin Confirmation"
+    description: "Tooling pins engaged underneath BGA zone to prevent board flex/bowing during pick-and-place."

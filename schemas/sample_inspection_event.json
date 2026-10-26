@@ -1,0 +1,60 @@
+{
+  "board_id": "OPTIMUS_BGA_REV1_004",
+  "checkpoint": "CHECKPOINT_WIRE_AND_PLACEMENT",
+  "alignment": {
+    "status": "PASS",
+    "dx_mm": 0.04,
+    "dy_mm": -0.02,
+    "dtheta_deg": 0.08,
+    "tolerance_dx_mm": 0.15,
+    "tolerance_dtheta_deg": 0.20
+  },
+  "bga_zone_detected": true,
+  "bga_checklist_passed": true,
+  "defects": [
+    {
+      "defect_id": 1,
+      "category": "WIRE_BOND",
+      "type": "WIRE_SWEEP_SHORT",
+      "component_ref": "U1_DIE_PAD_B4_B5",
+      "confidence": 0.94,
+      "obb": {
+        "xc": 412.5,
+        "yc": 308.2,
+        "width": 12.0,
+        "height": 45.8,
+        "angle_deg": 32.5
+      },
+      "severity": "CRITICAL"
+    },
+    {
+      "defect_id": 2,
+      "category": "SMT_PLACEMENT",
+      "type": "SKEWED_PASSIVE",
+      "component_ref": "R14_0201",
+      "confidence": 0.89,
+      "obb": {
+        "xc": 710.0,
+        "yc": 512.0,
+        "width": 16.0,
+        "height": 32.0,
+        "angle_deg": 14.2
+      },
+      "severity": "HIGH"
+    }
+  ],
+  "historical_defect_context": {
+    "rolling_window_count": 500,
+    "recurring_defect_counts": {
+      "WIRE_SWEEP_SHORT": 16,
+      "SKEWED_PASSIVE": 4,
+      "OPERATOR_CUSTOM_ANOMALY": 2
+    },
+    "localized_hotspot": "U1_DIE_PAD_B4_B5"
+  },
+  "operator_ingestion": {
+    "flagged_new_anomaly": false,
+    "operator_label": null,
+    "embedding_vector_id": null
+  }
+}
