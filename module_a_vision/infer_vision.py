@@ -33,12 +33,64 @@ except ImportError:
     HAS_ULTRALYTICS = False
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+WEIGHTS_DIR = Path(__file__).resolve().parent / "weights"
+# Default production model; fetch with `python -m module_a_vision.download_weights`
+DEFAULT_WEIGHTS = WEIGHTS_DIR / "smt_merged_v8s.pt"
+
+# Non-defect classes some models emit; never reported as defects
+NORMAL_CLASSES = {"GOOD_JOINT", "WIRE_NORMAL"}
+
+# Class name -> schema category (schemas/inspection_event.json enum)
+CLASS_CATEGORY = {
+    # Wire bonding
+    "WIRE_SWEEP_SHORT": "WIRE_BOND",
+    "LIFTED_HEEL": "WIRE_BOND",
+    "LOOP_SAG": "WIRE_BOND",
+    # Solder paste / solder joint
+    "SOLDER_BRIDGE": "SMT_SPI",
+    "STARVED_PASTE": "SMT_SPI",
+    "INSUFFICIENT_SOLDER": "SMT_SPI",
+    "EXCESS_SOLDER": "SMT_SPI",
+    "SOLDER_VOID": "SMT_SPI",
+    "SOLDER_SPIKE": "SMT_SPI",
+    # Component placement / body
+    "SKEWED_PASSIVE": "SMT_PLACEMENT",
+    "TOMBSTONE": "SMT_PLACEMENT",
+    "MISSING_COMPONENT": "SMT_PLACEMENT",
+    "SHIFTED_COMPONENT": "SMT_PLACEMENT",
+    "PHYSICAL_DAMAGE": "SMT_PLACEMENT",
+    "BURN": "SMT_PLACEMENT",
+    "OXIDATION": "SMT_PLACEMENT",
+}
+
+CLASS_SEVERITY = {
+    "WIRE_SWEEP_SHORT": "CRITICAL",
+    "SOLDER_BRIDGE": "CRITICAL",
+    "MISSING_COMPONENT": "CRITICAL",
+    "BURN": "CRITICAL",
+    "LIFTED_HEEL": "HIGH",
+    "INSUFFICIENT_SOLDER": "HIGH",
+    "STARVED_PASTE": "HIGH",
+    "SHIFTED_COMPONENT": "HIGH",
+    "SKEWED_PASSIVE": "HIGH",
+    "TOMBSTONE": "HIGH",
+    "PHYSICAL_DAMAGE": "HIGH",
+    "LOOP_SAG": "MEDIUM",
+    "EXCESS_SOLDER": "MEDIUM",
+    "SOLDER_VOID": "MEDIUM",
+    "SOLDER_SPIKE": "MEDIUM",
+    "OXIDATION": "LOW",
+}
 
 
 class VisionInferenceEngine:
-    """YOLOv8-OBB Oriented Bounding Box defect detection and inference engine."""
+    """YOLOv8-OBB Oriented Bounding Box defect detection and inference engine.
 
-    def __init__(self, model_weights: Optional[Path] = None, conf_threshold: float = 0.50):
+    By default loads module_a_vision/weights/smt_merged_v8s.pt if present.
+    Pass model_weights=None to force the Tier-0 analytical fallback.
+    """
+
+    def __init__(self, model_weights: Optional[Path] = DEFAULT_WEIGHTS, conf_threshold: float = 0.50):
         self.conf_threshold = conf_threshold
         self.model = None
         self.model_weights = model_weights
@@ -155,17 +207,18 @@ class VisionInferenceEngine:
             return defects
 
         obb_data = result.obb
-        for idx, (box, conf, cls_id) in enumerate(zip(obb_data.xywhr, obb_data.conf, obb_data.cls)):
+        for box, conf, cls_id in zip(obb_data.xywhr, obb_data.conf, obb_data.cls):
+            class_name = result.names.get(int(cls_id), "UNKNOWN_DEFECT")
+            if class_name in NORMAL_CLASSES:
+                continue
             xc, yc, w, h, angle_rad = box.tolist()
             angle_deg = math.degrees(angle_rad)
-            class_name = result.names.get(int(cls_id), "UNKNOWN_DEFECT")
 
-            # Determine category and severity
-            category = "WIRE_BOND" if "WIRE" in class_name or "HEEL" in class_name else "SMT_PLACEMENT"
-            severity = "CRITICAL" if "SHORT" in class_name or "BRIDGE" in class_name else "HIGH"
+            category = CLASS_CATEGORY.get(class_name, "SMT_PLACEMENT")
+            severity = CLASS_SEVERITY.get(class_name, "HIGH")
 
             defects.append({
-                "defect_id": idx + 1,
+                "defect_id": len(defects) + 1,
                 "category": category,
                 "type": class_name,
                 "component_ref": f"COMP_LOC_{int(xc)}_{int(yc)}",

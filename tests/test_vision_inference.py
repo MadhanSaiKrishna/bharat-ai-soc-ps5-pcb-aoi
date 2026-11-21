@@ -17,7 +17,9 @@ from module_a_vision.infer_vision import VisionInferenceEngine
 
 
 def test_vision_engine_detection():
-    engine = VisionInferenceEngine()
+    # Force the deterministic analytical fallback so the test does not depend
+    # on whether trained weights are present on this machine.
+    engine = VisionInferenceEngine(model_weights=None)
     test_frame = np.zeros((600, 800, 3), dtype=np.uint8)
 
     defects, latency_ms = engine.detect_defects(test_frame, checkpoint="CHECKPOINT_WIRE_AND_PLACEMENT")
@@ -36,7 +38,7 @@ def test_vision_engine_detection():
 
 
 def test_vision_engine_event_builder():
-    engine = VisionInferenceEngine()
+    engine = VisionInferenceEngine(model_weights=None)
     test_frame = np.zeros((600, 800, 3), dtype=np.uint8)
     defects, _ = engine.detect_defects(test_frame)
 
