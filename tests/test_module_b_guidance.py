@@ -130,4 +130,22 @@ def test_operator_cockpit_app_initialization():
     assert window.board_id_edit.text() == "OPTIMUS_BGA_REV1_004"
     assert len(window.current_event.get("defects", [])) == 2
     assert "U1_DIE_PAD_B4_B5" in window.dfm_text or "clearance" in window.dfm_text
+
+    # Test dynamic stage gate logic
+    # Default mock event has 2 defects (wire bond & SMT passive)
+    assert "REWORK REQUIRED" in window.lbl_final_verdict.text()
+
+    # Test passing state (0 defects)
+    window._update_stage_gates([])
+    assert "PASSED (ZERO DEFECTS)" in window.lbl_final_verdict.text()
+
+    # Test Auto-Align CAD
+    window._auto_align_cad()
+    assert "GATE: PASS" in window.align_hud_label.text()
+
+    # Test Run Inspection Cycle execution
+    window._run_cycle()
+    assert "Inspection Cycle Complete" in window.status_bar.currentMessage()
+    assert window.storage_manager is not None
+
     window.close()

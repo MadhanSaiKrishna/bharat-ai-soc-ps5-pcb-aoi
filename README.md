@@ -136,3 +136,21 @@ pip install -r requirements.txt
 ```bash
 python3 edge_llm_storage/dual_advisor.py --mock-input schemas/sample_inspection_event.json
 ```
+
+### 3. Run Regression & Contract Tests
+```bash
+python3 -m pytest tests/
+```
+
+### 4. Run Tier 0 Performance Benchmark
+```bash
+python3 benchmark_tier0.py 15
+```
+
+### 5. Launch the Operator Cockpit & Live Quality Copilot UI
+```bash
+python3 module_b_guidance/app_ui.py
+# Or with a pre-loaded customer Gerber package:
+python3 module_b_guidance/app_ui.py --gerber data/sample_gerbers/CUSTOMER_PCB_JOB_REV1.zip
+```
+*(In the Cockpit, press **Spacebar** or click **"🚀 Inspect Current Board"** to run the live inspection cycle, evaluate the 5-stage gate & BGA checklist, generate Llama 3.2 1B dual advisories, and log telemetry).*

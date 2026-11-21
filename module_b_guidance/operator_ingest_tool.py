@@ -80,9 +80,9 @@ class OperatorAnomalyIngestor:
         embedding_id = f"EMB_{anomaly_id}"
         has_embedding = False
         try:
-            from module_a_vision.embedding_extractor import MobileNetV3FeatureExtractor
-            extractor = MobileNetV3FeatureExtractor()
-            vector = extractor.extract(cropped)
+            from module_a_vision.embedding_extractor import LightweightEmbeddingExtractor
+            extractor = LightweightEmbeddingExtractor()
+            vector = extractor.extract_embedding(cropped)
             has_embedding = True
         except Exception:
             # Fallback when PyTorch or weights are not yet present on machine

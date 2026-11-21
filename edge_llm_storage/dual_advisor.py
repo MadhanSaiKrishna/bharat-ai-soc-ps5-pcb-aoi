@@ -95,10 +95,12 @@ class DualAdvisorEngine:
         try:
             from llama_cpp import Llama
             print(f"[DualAdvisor] Initializing on-device Llama 3.2 1B from {self.gguf_model_path}")
+            import os
+            num_threads = min(8, os.cpu_count() or 4)
             self.llm = Llama(
                 model_path=self.gguf_model_path,
                 n_ctx=512,
-                n_threads=4,
+                n_threads=num_threads,
                 verbose=False,
             )
             self.llm_loaded = True
