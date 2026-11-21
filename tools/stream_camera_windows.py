@@ -64,14 +64,28 @@ class CamStreamHandler(BaseHTTPRequestHandler):
 
 def capture_loop(camera_idx=0, width=1920, height=1080):
     global current_frame_jpeg, is_running
-    print(f"[Windows Cam Bridge] Opening camera index {camera_idx} via DirectShow (DSHOW)...")
-    cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        print(f"[WARN] Failed with CAP_DSHOW, retrying with default backend...")
-        cap = cv2.VideoCapture(camera_idx)
+    print(f"[Windows Cam Bridge] Probing optical camera (requested index: {camera_idx})...")
+    
+    cap = None
+    # Try requested index first, then scan other indices if needed
+    candidates = [camera_idx] + [i for i in [0, 1, 2, 3] if i != camera_idx]
+    for idx in candidates:
+        print(f"[Windows Cam Bridge] Trying camera index {idx} with DirectShow...")
+        c = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        if not c.isOpened():
+            c = cv2.VideoCapture(idx)
+        if c.isOpened():
+            ret, test_frame = c.read()
+            if ret and test_frame is not None:
+                cap = c
+                camera_idx = idx
+                print(f"[Windows Cam Bridge] Successfully connected to camera index {idx}!")
+                break
+            c.release()
 
-    if not cap.isOpened():
-        print(f"[ERROR] Could not open camera {camera_idx} on Windows host.")
+    if not cap or not cap.isOpened():
+        print(f"[ERROR] Could not open any optical camera on Windows host.")
+        print("[ERROR] Please verify the USB camera is plugged in and not in use by another app (e.g. Windows Camera, Teams).")
         is_running = False
         return
 
@@ -81,7 +95,8 @@ def capture_loop(camera_idx=0, width=1920, height=1080):
 
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"[Windows Cam Bridge] Camera active at {actual_w}x{actual_h} px. Streaming to WSL2 at http://localhost:8080/video_feed")
+    print(f"[Windows Cam Bridge] Camera streaming at {actual_w}x{actual_h} px.")
+    print(f"[Windows Cam Bridge] Stream URL: http://localhost:8080/video_feed")
 
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
 
@@ -91,7 +106,7 @@ def capture_loop(camera_idx=0, width=1920, height=1080):
             _, jpeg = cv2.imencode(".jpg", frame, encode_param)
             current_frame_jpeg = jpeg.tobytes()
         else:
-            time.sleep(0.05)
+            time.sleep(0.01)
 
     cap.release()
 

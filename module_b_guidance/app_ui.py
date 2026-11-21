@@ -290,11 +290,35 @@ class CameraWorker(QThread):
                 cap = cv2.VideoCapture(self.source, cv2.CAP_V4L2)
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(self.source)
+            elif isinstance(self.source, str) and "8080" in self.source:
+                # Try 127.0.0.1 loopback first
+                cap = cv2.VideoCapture("http://127.0.0.1:8080/video_feed")
+                if not cap.isOpened():
+                    # Fallback to WSL2 default gateway host IP if in NAT mode
+                    host_ip = "127.0.0.1"
+                    try:
+                        with open("/etc/resolv.conf", "r") as f:
+                            for line in f:
+                                if line.startswith("nameserver"):
+                                    host_ip = line.split()[1]
+                                    break
+                    except Exception:
+                        pass
+                    if host_ip != "127.0.0.1":
+                        cap = cv2.VideoCapture(f"http://{host_ip}:8080/video_feed")
             else:
                 cap = cv2.VideoCapture(str(self.source))
 
             if not cap or not cap.isOpened():
-                self.error_occurred.emit(f"Could not open optical stream '{self.source}'.")
+                if isinstance(self.source, str) and "8080" in self.source:
+                    self.error_occurred.emit(
+                        "Could not connect to Windows Camera Stream at http://localhost:8080/video_feed.\n\n"
+                        "Please run the bridge in Windows PowerShell first:\n"
+                        "    python tools/stream_camera_windows.py\n\n"
+                        "Then re-select 'Live Windows Stream' in the dropdown."
+                    )
+                else:
+                    self.error_occurred.emit(f"Could not open optical stream '{self.source}'.")
                 return
 
             if isinstance(self.source, int):
@@ -303,6 +327,7 @@ class CameraWorker(QThread):
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
             consecutive_failures = 0
+            max_failures = 3 if isinstance(self.source, int) else 45
             while self.running:
                 ret, bgr_frame = cap.read()
                 if ret and bgr_frame is not None:
@@ -312,7 +337,7 @@ class CameraWorker(QThread):
                     self.frame_ready.emit(img)
                 else:
                     consecutive_failures += 1
-                    if consecutive_failures >= 3:
+                    if consecutive_failures >= max_failures:
                         msg = (
                             "Optical camera stream timed out.\n\n"
                             "WSL2 Root Cause:\n"
