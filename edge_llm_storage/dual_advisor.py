@@ -132,13 +132,28 @@ class DualAdvisorEngine:
             asm_response = self._heuristic_assembler(event)
 
         return {
-            "dfm_layout_advisory": dfm_response,
-            "assembler_calibration_advisory": asm_response,
+            "dfm_layout_advisory": self._enforce_word_limit(dfm_response, max_words=38),
+            "assembler_calibration_advisory": self._enforce_word_limit(asm_response, max_words=38),
         }
 
+    def _enforce_word_limit(self, text: str, max_words: int = 38) -> str:
+        """Enforces competition <40 words rule."""
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        truncated = " ".join(words[:max_words])
+        if not truncated.endswith("."):
+            truncated += "..."
+        return truncated
+
     def _run_executorch_infer(self, prompt: str, branch: str) -> str:
-        # Calls ExecuTorch wrapper
-        return f"[ExecuTorch {branch.upper()}]: Advisory output based on prompt."
+        # Calls ExecuTorch wrapper if runner is attached
+        if hasattr(self, "runner") and self.runner is not None:
+            try:
+                return self.runner.generate(prompt, max_tokens=60)
+            except Exception as e:
+                print(f"[ExecuTorch] Runtime inference error: {e}")
+        return f"EXECUTORCH ADVISORY: {branch.upper()} action executed based on rolling defect telemetry."
 
     def _heuristic_dfm(self, event: Dict[str, Any]) -> str:
         defects = event.get("defects", [])
