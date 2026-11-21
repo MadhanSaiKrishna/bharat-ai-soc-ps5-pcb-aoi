@@ -87,16 +87,24 @@ class InspectionCanvas(QWidget):
         self.crop_start: Optional[QPointF] = None
         self.crop_current: Optional[QPointF] = None
 
-    def set_frames(self, camera_img: Image.Image, cad_img: Image.Image):
-        """Sets PIL images and converts to QPixmap for rapid blitting."""
-        cam_rgba = camera_img.convert("RGBA")
-        qim_cam = QImage(cam_rgba.tobytes(), cam_rgba.width, cam_rgba.height, QImage.Format.Format_RGBA8888)
-        self.camera_pixmap = QPixmap.fromImage(qim_cam)
-
+    def set_cad_frame(self, cad_img: Image.Image):
+        """Converts and caches the static reference CAD overlay as QPixmap."""
         cad_rgba = cad_img.convert("RGBA")
         qim_cad = QImage(cad_rgba.tobytes(), cad_rgba.width, cad_rgba.height, QImage.Format.Format_RGBA8888)
         self.cad_pixmap = QPixmap.fromImage(qim_cad)
         self.update()
+
+    def set_camera_frame(self, camera_img: Image.Image):
+        """Updates the optical camera frame without re-rendering the CAD pixmap."""
+        cam_rgba = camera_img.convert("RGBA")
+        qim_cam = QImage(cam_rgba.tobytes(), cam_rgba.width, cam_rgba.height, QImage.Format.Format_RGBA8888)
+        self.camera_pixmap = QPixmap.fromImage(qim_cam)
+        self.update()
+
+    def set_frames(self, camera_img: Image.Image, cad_img: Image.Image):
+        """Sets both CAD and camera frames."""
+        self.set_cad_frame(cad_img)
+        self.set_camera_frame(camera_img)
 
     def set_cad_opacity(self, opacity: float):
         self.cad_opacity = max(0.0, min(1.0, opacity))
@@ -121,28 +129,26 @@ class InspectionCanvas(QWidget):
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Optical Rig Offline - Load Mock Stream")
             return
 
-        # Target display rect keeping aspect ratio
-        scaled_cam = self.camera_pixmap.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        target_rect = QRectF(
-            (w - scaled_cam.width()) / 2,
-            (h - scaled_cam.height()) / 2,
-            scaled_cam.width(),
-            scaled_cam.height(),
-        )
+        # Target display rect keeping aspect ratio with zero-allocation scaling
+        cam_w = max(1, self.camera_pixmap.width())
+        cam_h = max(1, self.camera_pixmap.height())
+        ratio = min(w / cam_w, h / cam_h)
+        disp_w = cam_w * ratio
+        disp_h = cam_h * ratio
+        target_rect = QRectF((w - disp_w) / 2, (h - disp_h) / 2, disp_w, disp_h)
 
         # Scale factor from source image coords to display canvas
-        scale_x = target_rect.width() / self.camera_pixmap.width()
-        scale_y = target_rect.height() / self.camera_pixmap.height()
+        scale_x = target_rect.width() / cam_w
+        scale_y = target_rect.height() / cam_h
 
-        # 1. Draw Optical Camera Frame
+        # 1. Draw Optical Camera Frame (fast GPU/software blit directly into target rect)
         painter.setOpacity(1.0)
-        painter.drawPixmap(target_rect.toRect(), scaled_cam)
+        painter.drawPixmap(target_rect.toRect(), self.camera_pixmap)
 
-        # 2. Draw Gerber CAD Overlay with Opacity Slider
+        # 2. Draw Gerber CAD Overlay with Opacity Slider (zero-copy draw directly into target rect)
         if self.cad_pixmap and self.cad_opacity > 0.01:
-            scaled_cad = self.cad_pixmap.scaled(int(target_rect.width()), int(target_rect.height()), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             painter.setOpacity(self.cad_opacity)
-            painter.drawPixmap(target_rect.toRect(), scaled_cad)
+            painter.drawPixmap(target_rect.toRect(), self.cad_pixmap)
 
         painter.setOpacity(1.0)
 
@@ -344,14 +350,19 @@ class CameraWorker(QThread):
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
             consecutive_failures = 0
+            last_emit_time = 0.0
+            target_interval = 1.0 / 15.0  # Smooth 15 FPS throttle
             while self.running:
                 ret, bgr_frame = cap.read()
+                now = time.time()
                 if ret and bgr_frame is not None:
                     consecutive_failures = 0
-                    rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
-                    img = Image.fromarray(rgb_frame)
-                    self.frame_ready.emit(img)
-                    self.msleep(1)
+                    if now - last_emit_time >= target_interval:
+                        last_emit_time = now
+                        rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+                        img = Image.fromarray(rgb_frame)
+                        self.frame_ready.emit(img)
+                    self.msleep(10)
                 else:
                     consecutive_failures += 1
                     # Transparent auto-reconnect for network streams
@@ -883,8 +894,7 @@ class OperatorCockpitApp(QMainWindow):
 
     def _on_camera_frame_ready(self, frame_img: Image.Image):
         self.camera_image = frame_img
-        if self.cad_image:
-            self.canvas.set_frames(self.camera_image, self.cad_image)
+        self.canvas.set_camera_frame(self.camera_image)
 
     def _on_camera_error(self, err_msg: str):
         self._stop_camera_worker()

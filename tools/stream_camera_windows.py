@@ -136,7 +136,7 @@ class CamStreamHandler(BaseHTTPRequestHandler):
         return
 
 
-def capture_loop(camera_idx=None, width=1280, height=720, show_preview=False):
+def capture_loop(camera_idx=None, width=1280, height=720, fps=15, show_preview=False):
     global current_frame_jpeg, frame_condition, is_running
 
     if camera_idx is None:
@@ -173,12 +173,14 @@ def capture_loop(camera_idx=None, width=1280, height=720, show_preview=False):
 
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"[Windows Cam Bridge] Active capture resolution: {actual_w}x{actual_h} px (Index {selected_idx})")
+    print(f"[Windows Cam Bridge] Active capture resolution: {actual_w}x{actual_h} px @ {fps} FPS (Index {selected_idx})")
     print(f"[Windows Cam Bridge] Streaming live feed to WSL2 at: http://localhost:8080/video_feed")
 
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+    frame_interval = 1.0 / max(1, fps)
 
     while is_running:
+        t0 = time.time()
         ret, frame = cap.read()
         if ret and frame is not None:
             _, jpeg = cv2.imencode(".jpg", frame, encode_param)
@@ -191,7 +193,7 @@ def capture_loop(camera_idx=None, width=1280, height=720, show_preview=False):
                 preview_frame = cv2.resize(frame, (960, 540))
                 cv2.putText(
                     preview_frame,
-                    f"Index {selected_idx}: {actual_w}x{actual_h} px | Press 'q' to close preview",
+                    f"Index {selected_idx}: {actual_w}x{actual_h} px @ {fps}fps | Press 'q' to close preview",
                     (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
@@ -202,8 +204,10 @@ def capture_loop(camera_idx=None, width=1280, height=720, show_preview=False):
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     show_preview = False
                     cv2.destroyAllWindows()
-        else:
-            time.sleep(0.01)
+
+        elapsed = time.time() - t0
+        sleep_dur = max(0.005, frame_interval - elapsed)
+        time.sleep(sleep_dur)
 
     cap.release()
     if show_preview:
@@ -217,6 +221,7 @@ def main():
     parser.add_argument("--port", type=int, default=8080, help="HTTP streaming port (default: 8080)")
     parser.add_argument("--width", type=int, default=1280, help="Target capture width (default: 1280)")
     parser.add_argument("--height", type=int, default=720, help="Target capture height (default: 720)")
+    parser.add_argument("--fps", type=int, default=15, help="Target streaming FPS (default: 15, smooth and low bandwidth)")
     parser.add_argument("--preview", action="store_true", help="Open a local preview window on Windows to verify camera aim")
     args = parser.parse_args()
 
@@ -226,7 +231,7 @@ def main():
 
     t = threading.Thread(
         target=capture_loop,
-        args=(args.index, args.width, args.height, args.preview),
+        args=(args.index, args.width, args.height, args.fps, args.preview),
         daemon=True,
     )
     t.start()
