@@ -768,7 +768,11 @@ class OperatorCockpitApp(QMainWindow):
 
             if not self.camera_cap.isOpened():
                 import glob
+                import os
                 devs = glob.glob("/dev/video*")
+                dev_path = f"/dev/video{device_id}"
+                has_rw = os.access(dev_path, os.R_OK | os.W_OK) if os.path.exists(dev_path) else False
+
                 if not devs:
                     msg = (
                         f"No /dev/video* devices found in Linux.\n\n"
@@ -779,6 +783,13 @@ class OperatorCockpitApp(QMainWindow):
                         f"   2. usbipd bind --busid <BUSID>\n"
                         f"   3. usbipd attach --wsl --busid <BUSID>\n\n"
                         f"You can also use 'Load Optical Image from Disk...' to load any photo."
+                    )
+                elif not has_rw:
+                    msg = (
+                        f"Found camera device '{dev_path}', but Linux permission was denied.\n\n"
+                        f"Run this command in your terminal to grant read/write access:\n"
+                        f"   sudo chmod 666 /dev/video*\n\n"
+                        f"Then re-select the camera in the dropdown."
                     )
                 else:
                     msg = f"Device /dev/video{device_id} could not be opened. Found devices: {devs}."

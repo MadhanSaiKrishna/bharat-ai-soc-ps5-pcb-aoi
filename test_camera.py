@@ -46,12 +46,31 @@ def check_cameras():
         except ValueError:
             continue
 
+        # Check device hardware name from sysfs
+        dev_name = "Unknown"
+        try:
+            with open(f"/sys/class/video4linux/video{dev_idx}/name", "r") as f:
+                dev_name = f.read().strip()
+        except Exception:
+            pass
+
+        print(f"\nDevice {dev_path}: '{dev_name}'")
+
+        # Check permissions
+        import os
+        has_rw = os.access(dev_path, os.R_OK | os.W_OK)
+        if not has_rw:
+            print(f"  [ERROR: PERMISSION DENIED] Your user cannot read/write {dev_path}.")
+            print("  Fix with this command in your terminal:")
+            print(f"      sudo chmod 666 /dev/video*")
+            continue
+
         cap = cv2.VideoCapture(dev_idx, cv2.CAP_V4L2)
         if cap.isOpened():
             ret, frame = cap.read()
             if ret and frame is not None:
                 h, w = frame.shape[:2]
-                print(f"  [SUCCESS] {dev_path} is ACTIVE! Resolution: {w}x{h} px")
+                print(f"  [SUCCESS] {dev_path} is ACTIVE! Capture resolution: {w}x{h} px")
             else:
                 print(f"  [WARN] {dev_path} opened but returned no frame (may be a metadata node).")
             cap.release()
