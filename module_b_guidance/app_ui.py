@@ -264,6 +264,26 @@ class OperatorIngestDialog(QDialog):
         }
 
 
+def get_windows_host_ip() -> str:
+    """Returns the Windows host default gateway IP from the WSL2 routing table."""
+    try:
+        import subprocess
+        out = subprocess.check_output(["ip", "route", "show", "default"], text=True, stderr=subprocess.DEVNULL)
+        parts = out.split()
+        if "via" in parts:
+            return parts[parts.index("via") + 1]
+    except Exception:
+        pass
+    try:
+        with open("/etc/resolv.conf", "r") as f:
+            for line in f:
+                if line.startswith("nameserver"):
+                    return line.split()[1]
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
 class CameraWorker(QThread):
     """
     Asynchronous camera worker thread.
@@ -292,22 +312,16 @@ class CameraWorker(QThread):
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(self.source)
             elif isinstance(self.source, str) and "8080" in self.source:
-                stream_url = "http://127.0.0.1:8080/video_feed"
-                cap = cv2.VideoCapture(stream_url)
-                if not cap.isOpened():
-                    # Fallback to WSL2 default gateway host IP if in NAT mode
-                    host_ip = "127.0.0.1"
-                    try:
-                        with open("/etc/resolv.conf", "r") as f:
-                            for line in f:
-                                if line.startswith("nameserver"):
-                                    host_ip = line.split()[1]
-                                    break
-                    except Exception:
-                        pass
-                    if host_ip != "127.0.0.1":
-                        stream_url = f"http://{host_ip}:8080/video_feed"
-                        cap = cv2.VideoCapture(stream_url)
+                host_ip = get_windows_host_ip()
+                candidates = [f"http://{host_ip}:8080/video_feed"]
+                if host_ip != "127.0.0.1":
+                    candidates.append("http://127.0.0.1:8080/video_feed")
+
+                for u in candidates:
+                    cap = cv2.VideoCapture(u)
+                    if cap and cap.isOpened():
+                        stream_url = u
+                        break
             else:
                 stream_url = str(self.source)
                 cap = cv2.VideoCapture(stream_url)
@@ -939,7 +953,8 @@ class OperatorCockpitApp(QMainWindow):
                 self.source_combo.setCurrentIndex(0)
                 return
 
-            url = "http://localhost:8080/video_feed"
+            host_ip = get_windows_host_ip()
+            url = f"http://{host_ip}:8080/video_feed"
             self.status_bar.showMessage(f"Connecting to Windows bridge stream at {url}...")
             self.camera_worker = CameraWorker(url)
             self.camera_worker.frame_ready.connect(self._on_camera_frame_ready)
