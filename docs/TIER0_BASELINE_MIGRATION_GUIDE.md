@@ -233,3 +233,21 @@ python3 module_b_guidance/app_ui.py
 ```bash
 python3 edge_llm_storage/dual_advisor.py --mock-input schemas/sample_inspection_event.json
 ```
+
+---
+
+## 6. Living Changelog: Implementations, Tradeoffs & Edge Migration Ledger
+
+> [!IMPORTANT]
+> **Documentation Rule:** Any code change, mock adaptation, or hardware fallback introduced on the `feat/tier0-baseline` branch **must** be logged in this ledger with its associated tradeoffs and edge porting requirements.
+
+| Date / Commit | Subsystem / File | What Was Implemented for Tier 0 | Tradeoff / Laptop Accommodation | Edge ZCU104 Migration Task |
+| :--- | :--- | :--- | :--- | :--- |
+| **2026-11-21** (`bfd21de`) | `module_b_guidance/app_ui.py` | Added "Load Optical Image from Disk..." button and WSL2 camera diagnostic fallbacks | Avoids failure when no USB camera is plugged into the laptop or when WSL2 has not attached USB via `usbipd`. | In production, lock input to `/dev/video0` (V4L2) with hardware GPIO trigger sync; disable file picker in production kiosk mode. |
+| **2026-11-21** (`bfd21de`) | `module_b_guidance/homography_align.py` | Dual-mode homography (3-point affine transform via `cv2.getAffineTransform` vs 4+ point RANSAC via `cv2.findHomography`) | Prevents crash (`npoints >= 4 expected`) when fewer than 4 optical fiducials are visible on test boards. | On the factory conveyor rig, ensure all 4 fiducials are within the optical rig FOV; enforce RANSAC with strict thresholding. |
+| **2026-11-21** (`bfd21de`) | `module_b_guidance/gerber_renderer.py` | Procedural 5000x4000 synthetic PCB CAD generator (BGA, 0201 passives, wire bonds, fiducials) | Allows instant visual testing and CAD overlay alignment without waiting for proprietary customer Gerbers. | In production, replace procedural generator with standard customer RS-274X zip ingestion (`.gtp`, `.gtl`, `.gts`, `.gko`). |
+| **2026-11-21** (`bfd21de`) | `edge_llm_storage/dual_advisor.py` | Real Meta Llama 3.2 1B-Instruct GGUF (Q4_K_M) inference using `llama-cpp-python` with AVX2 CPU acceleration | Executes on x86_64 CPU without requiring Arm cross-compilation or specialized hardware accelerators. | Port to ExecuTorch runtime using Arm KleidiAI / XNNPACK INT4 kernels (`.pte` format) executing on the Cortex-A53 PS. |
+| **2026-11-21** (`bfd21de`) | `edge_llm_storage/storage_manager.py` | Telemetry logs and defect crops saved to local repository paths (`data/telemetry_logs/`, `data/raw_defect_dumps/`) | Uses standard laptop SSD storage without requiring physical partition mounting or root privileges. | Repoint `STORAGE_ROOT` to dedicated high-speed PCIe M.2 NVMe partition (`/mnt/nvme/aoi_buffer`) on the ZCU104 board. |
+| **2026-11-21** (`bfd21de`) | `module_a_vision/infer_vision.py` | Synthetic defect fallback injecting standardized OBB defects when `.pt` weights are absent | Allows full end-to-end pipeline, contract schema, and UI validation before training custom YOLO weights. | Replace synthetic fallback with AMD Vitis AI DPU runtime (`vart.Runner`) loading quantized `dpu_yolov8_obb.xmodel`. |
+| **2026-11-21** (`bfd21de`) | `benchmark_tier0.py` | Master evaluation suite measuring cycle time, RAM consumption, and 40-word advisory compliance | Runs on developer laptop to establish performance baselines and verify contract compliance. | Run identically on ZCU104 PetaLinux to verify compliance against Tier 3 targets (Cycle Time $\le 3.5\text{ s}$, RAM $< 1100\text{ MB}$). |
+
