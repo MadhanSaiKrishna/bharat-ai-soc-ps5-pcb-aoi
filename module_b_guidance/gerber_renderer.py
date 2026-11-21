@@ -10,13 +10,15 @@ Includes a procedural high-fidelity synthetic CAD renderer for mock testing.
 
 import math
 import os
+import zipfile
+import tempfile
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 try:
-    import pygerber
+    from pygerber.gerberx3.api import Rasterized2DLayer, Rasterized2DLayerParams, ColorScheme
     HAS_PYGERBER = True
 except ImportError:
     HAS_PYGERBER = False
@@ -195,6 +197,134 @@ class GerberRenderer:
         alpha = max(0.0, min(1.0, alpha))
         cam_rgba = camera_img.convert("RGBA").resize(cad_img.size)
         return Image.blend(cam_rgba, cad_img, alpha)
+
+    def render_gerber_bundle(
+        self,
+        bundle_path: Path,
+        dpi: int = 150,
+    ) -> Tuple[Image.Image, List[Tuple[float, float]], Dict[str, Any]]:
+        """
+        Parses and composites customer RS-274X Gerber layers from a .zip archive or folder.
+        Layers supported: Top Copper, Solder Paste, Solder Mask, Silkscreen, Board Outline.
+
+        Returns:
+            composite_img (PIL.Image): Full composited multi-layer CAD overlay image
+            fiducials_mm: List of (X, Y) nominal fiducials in millimeters
+            metadata: Dict with job name, detected layers, board dimensions
+        """
+        bundle_path = Path(bundle_path)
+        job_name = bundle_path.stem
+
+        if not HAS_PYGERBER:
+            print(f"[WARN] PyGerber not available. Falling back to synthetic generator for job: {job_name}")
+            cad, fids, comps = self.generate_synthetic_cad_board()
+            return cad, fids, {"job_name": job_name, "mode": "synthetic_fallback", "layers": ["Synthetic CAD Fallback"]}
+
+        # Extract zip or locate files
+        temp_dir_ctx = None
+        if bundle_path.is_file() and bundle_path.suffix.lower() == ".zip":
+            temp_dir_ctx = tempfile.TemporaryDirectory()
+            work_dir = Path(temp_dir_ctx.name)
+            with zipfile.ZipFile(bundle_path, "r") as zf:
+                zf.extractall(work_dir)
+        elif bundle_path.is_dir():
+            work_dir = bundle_path
+        else:
+            raise ValueError(f"Invalid Gerber bundle path: {bundle_path} (must be .zip or directory)")
+
+        try:
+            # Find and classify Gerber layer files
+            all_files = list(work_dir.glob("**/*"))
+            layer_map: List[Tuple[Path, Any, str]] = []
+
+            for f in all_files:
+                if not f.is_file():
+                    continue
+                ext = f.suffix.lower()
+                name = f.name.lower()
+
+                # Classification by extension or common EDA conventions (KiCad / Altium / Eagle)
+                if ext in [".gtl", ".top", ".cmp"] or "f_cu" in name or "top_copper" in name:
+                    layer_map.append((f, ColorScheme.COPPER_ALPHA, "Top Copper (GTL)"))
+                elif ext in [".gtp", ".crc"] or "f_paste" in name or "solder_paste" in name:
+                    layer_map.append((f, ColorScheme.PASTE_MASK_ALPHA, "Solder Paste (GTP)"))
+                elif ext in [".gts", ".stc"] or "f_mask" in name or "solder_mask" in name:
+                    layer_map.append((f, ColorScheme.SOLDER_MASK_ALPHA, "Solder Mask (GTS)"))
+                elif ext in [".gto", ".plc"] or "f_silkscreen" in name or "silkscreen" in name:
+                    layer_map.append((f, ColorScheme.SILK_ALPHA, "Silkscreen (GTO)"))
+
+            if not layer_map:
+                print(f"[WARN] No recognizable Gerber layers found in {bundle_path}. Using synthetic CAD.")
+                cad, fids, comps = self.generate_synthetic_cad_board()
+                return cad, fids, {"job_name": job_name, "mode": "synthetic_fallback", "layers": ["Synthetic CAD Fallback"]}
+
+            # Render individual layers and compute union bounding box
+            rendered_layers = []
+            min_x = 1e9
+            min_y = 1e9
+            max_x = -1e9
+            max_y = -1e9
+
+            for path, scheme, layer_desc in layer_map:
+                try:
+                    layer = Rasterized2DLayer(Rasterized2DLayerParams(source_path=path, colors=scheme, dpi=dpi))
+                    res = layer.render()
+                    img = res.get_image()
+                    bbox = res.get_properties().target_bounding_box
+                    val_min_x = float(bbox.min_x.value)
+                    val_min_y = float(bbox.min_y.value)
+                    val_max_x = float(bbox.max_x.value)
+                    val_max_y = float(bbox.max_y.value)
+
+                    min_x = min(min_x, val_min_x)
+                    min_y = min(min_y, val_min_y)
+                    max_x = max(max_x, val_max_x)
+                    max_y = max(max_y, val_max_y)
+
+                    rendered_layers.append((img, val_min_x, val_min_y, val_max_x, val_max_y, layer_desc))
+                except Exception as e:
+                    print(f"[WARN] Failed to render layer {path.name}: {e}")
+
+            if not rendered_layers:
+                cad, fids, comps = self.generate_synthetic_cad_board()
+                return cad, fids, {"job_name": job_name, "mode": "synthetic_fallback", "layers": ["Synthetic CAD Fallback"]}
+
+            # Composite onto dark green PCB substrate
+            scale = dpi / 25.4
+            margin_px = 30
+            board_w_mm = max_x - min_x
+            board_h_mm = max_y - min_y
+            total_w_px = int(board_w_mm * scale) + margin_px * 2
+            total_h_px = int(board_h_mm * scale) + margin_px * 2
+
+            board_img = Image.new("RGBA", (total_w_px, total_h_px), (18, 38, 25, 255))
+
+            # Composite in standard stack order: Copper -> Paste -> Silk
+            for img, lx_min, ly_min, lx_max, ly_max, layer_desc in rendered_layers:
+                ox = int((lx_min - min_x) * scale) + margin_px
+                oy = int((max_y - ly_max) * scale) + margin_px
+                board_img.alpha_composite(img.convert("RGBA"), (ox, oy))
+
+            # Extract 3 nominal optical fiducials (nominal corner locations)
+            fiducials_mm = [
+                (round(min_x + 5.0, 2), round(min_y + 5.0, 2)),
+                (round(max_x - 5.0, 2), round(min_y + 5.0, 2)),
+                (round((min_x + max_x) / 2.0, 2), round(max_y - 5.0, 2)),
+            ]
+
+            meta = {
+                "job_name": job_name,
+                "layers": [l[5] for l in rendered_layers],
+                "width_mm": round(board_w_mm, 2),
+                "height_mm": round(board_h_mm, 2),
+                "resolution_px": board_img.size,
+                "dpi": dpi,
+            }
+            return board_img, fiducials_mm, meta
+
+        finally:
+            if temp_dir_ctx:
+                temp_dir_ctx.cleanup()
 
 
 if __name__ == "__main__":

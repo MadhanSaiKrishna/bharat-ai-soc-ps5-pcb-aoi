@@ -528,6 +528,15 @@ class OperatorCockpitApp(QMainWindow):
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
         h_layout.addWidget(self.source_combo)
 
+        h_layout.addSpacing(10)
+        self.load_gerber_btn = QPushButton("📁 Load Customer Gerber (.zip)...")
+        self.load_gerber_btn.setStyleSheet(
+            "background-color: #2B6CB0; color: #FFFFFF; font-weight: bold; "
+            "padding: 5px 12px; border-radius: 4px; border: 1px solid #3182CE;"
+        )
+        self.load_gerber_btn.clicked.connect(lambda: self._on_load_customer_gerber())
+        h_layout.addWidget(self.load_gerber_btn)
+
         h_layout.addStretch()
 
         # Homography Alignment HUD Pill
@@ -991,16 +1000,67 @@ class OperatorCockpitApp(QMainWindow):
             self.status_bar.showMessage("Switched to Synthetic PCB Simulation mode.")
             self.load_mock_event(SAMPLE_EVENT_PATH)
 
+    def _on_load_customer_gerber(self, gerber_file_path=None):
+        """Allows the assembler to load a customer Gerber bundle (.zip or folder)."""
+        if not gerber_file_path:
+            gerber_file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Customer PCB Gerber Package",
+                str(REPO_ROOT / "data" / "sample_gerbers"),
+                "Gerber Bundles (*.zip *.tar.gz);;All Files (*)",
+            )
+        if not gerber_file_path or not os.path.exists(gerber_file_path):
+            return
+
+        try:
+            p = Path(gerber_file_path)
+            self.status_bar.showMessage(f"Parsing customer Gerber layers: {p.name}...")
+            cad_img, fids, meta = self.gerber_renderer.render_gerber_bundle(p, dpi=120)
+
+            self.cad_image = cad_img
+            self.canvas.set_cad_frame(self.cad_image)
+
+            job_name = meta.get("job_name", p.stem)
+            self.board_id_edit.setText(job_name)
+            self.current_event["board_id"] = job_name
+
+            layers_list = meta.get("layers", [])
+            layers_str = ", ".join(layers_list)
+            dims_str = f"{meta.get('width_mm', '?')} x {meta.get('height_mm', '?')} mm"
+            self.status_bar.showMessage(f"Active Job: {job_name} | Layers: {layers_str} | Size: {dims_str}")
+
+            if "--headless" not in sys.argv and os.environ.get("HEADLESS_TEST") != "1":
+                QMessageBox.information(
+                    self,
+                    "Customer Gerber Package Loaded",
+                    f"Successfully parsed customer RS-274X CAD package!\n\n"
+                    f"Job Name: {job_name}\n"
+                    f"Board Dimensions: {dims_str}\n"
+                    f"Composited Layers ({len(layers_list)}):\n  • " + "\n  • ".join(layers_list) + "\n\n"
+                    f"The reference CAD overlay has been loaded into the live optical inspection canvas.",
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Gerber Parsing Error", f"Failed to parse Gerber package:\n{str(e)}")
+
     def closeEvent(self, event):
         self._stop_camera_worker()
         super().closeEvent(event)
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Bharat AI-SoC PS5 PCB AOI - Operator Cockpit")
+    parser.add_argument("--headless", action="store_true", help="Run in headless verification mode")
+    parser.add_argument("--gerber", type=str, default=None, help="Path to customer Gerber zip or folder to load on startup")
+    args, _ = parser.parse_known_args()
+
     app = QApplication(sys.argv)
     window = OperatorCockpitApp()
-    
-    if "--headless" in sys.argv:
+
+    if args.gerber and os.path.exists(args.gerber):
+        window._on_load_customer_gerber(args.gerber)
+
+    if args.headless or "--headless" in sys.argv:
         print("[OperatorCockpitApp] Headless verification mode: UI initialized successfully.")
         return 0
 

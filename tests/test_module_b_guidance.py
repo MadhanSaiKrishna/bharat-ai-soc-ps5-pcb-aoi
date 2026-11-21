@@ -38,6 +38,18 @@ def test_gerber_renderer_synthetic_board():
     assert blended.size == (5000, 4000)
 
 
+def test_gerber_renderer_bundle_render():
+    renderer = GerberRenderer()
+    sample_zip = ROOT_DIR / "data" / "sample_gerbers" / "CUSTOMER_PCB_JOB_REV1.zip"
+    if sample_zip.exists():
+        cad_img, fids, meta = renderer.render_gerber_bundle(sample_zip, dpi=100)
+        assert cad_img is not None
+        assert cad_img.mode == "RGBA"
+        assert len(fids) == 3
+        assert "CUSTOMER_PCB_JOB_REV1" in meta["job_name"]
+        assert len(meta["layers"]) >= 2
+
+
 def test_homography_alignment_calculation():
     engine = FiducialHomographyEngine(pixels_per_mm=50.0)
     cad_fiducials = [(10.0, 10.0), (90.0, 10.0), (50.0, 70.0)]
