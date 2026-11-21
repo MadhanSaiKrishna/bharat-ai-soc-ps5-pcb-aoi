@@ -86,11 +86,16 @@ bharat-ai-soc-ps5-pcb-aoi/
 │   ├── sample_gerbers/              # Reference Gerber files (GTP, GTL, GTO, GKO)
 │   ├── synthetic_generator/         # Member 1: synth_defects.py (wire bonds, SPI, placement)
 │   └── operator_ingest_queue/       # Local storage queue for operator-flagged anomalies
-├── module_a_vision/                 # Member 1: YOLOv8-OBB training & export
-│   ├── train_obb_wire_bond.py
-│   ├── train_spi_placement.py
+├── module_a_vision/                 # Member 1: YOLOv8-OBB training & export (see module_a_vision/README.md)
+│   ├── README.md                    # Datasets, class taxonomy, model specs, results, repro steps
+│   ├── train_obb.py                 # Ultralytics YOLOv8-OBB fine-tune wrapper -> weights/<name>.pt
+│   ├── download_weights.py          # Fetches trained weights from GitHub release (vision-v1)
+│   ├── datasets/
+│   │   ├── convert_soldef.py        # SolDef_AI LabelMe polygons -> YOLO-OBB
+│   │   └── build_smt_merged.py      # HF solder dataset + SolDef -> 10-class OBB dataset
+│   ├── weights/                     # Local .pt files (git-ignored; via download_weights.py)
 │   ├── embedding_extractor.py       # MobileNetV3 feature vector generator for active learning
-│   └── infer_vision.py              # Emits standardized defect entries for inspection_event.json
+│   └── infer_vision.py              # Auto-loads weights, emits defect entries for inspection_event.json
 ├── module_b_guidance/               # Member 3: Gerber parser, homography & operator UI
 │   ├── gerber_renderer.py           # PyGerber RS-274X layer compositor & die/BGA pad extractor
 │   ├── homography_align.py          # Fiducial matching & real-time dX, dY, dTheta engine
@@ -120,6 +125,14 @@ bharat-ai-soc-ps5-pcb-aoi/
 > [!NOTE]
 > **Tier 0 Implementation & Edge Migration Guide:**  
 > The Tier 0 workstation/laptop baseline is **100% operational and physically verified** (Intel Core i9 + WSL2 + e-con See3CAM_CU30 USB 3.0 optical macro camera). For complete documentation of all Tier 0 accommodations (local storage buffers, non-blocking 15 FPS streaming bridge, customer RS-274X Gerber `.zip` ingestion, local GGUF Llama runtime) and their corresponding target mappings on the AMD Xilinx ZCU104 MPSoC, see the [Tier 0 Baseline & Edge Migration Guide](docs/TIER0_BASELINE_MIGRATION_GUIDE.md).
+
+> [!NOTE]
+> **Vision model status (Member 1, `vision-v1`, 2026-11-22):**
+> A trained **YOLOv8s-OBB SMT solder & assembly model** (`smt_merged_v8s.pt`) meets the Tier 0 accuracy target on a held-out test set: **0.882 mAP@0.5** (val 0.895), precision 0.81, recall 0.88, **13.6 ms/img** on an RTX 4050 laptop GPU (FP32).
+> - **10 classes:** INSUFFICIENT_SOLDER, EXCESS_SOLDER, SOLDER_BRIDGE, SOLDER_VOID, SOLDER_SPIKE (→ `SMT_SPI`); MISSING_COMPONENT, SHIFTED_COMPONENT, BURN, PHYSICAL_DAMAGE, OXIDATION (→ `SMT_PLACEMENT`).
+> - **Trained on public real-photo data:** [HF pcb-solder-defect-detection](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection) (5.2k images) + [SolDef_AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection) joint-level subset.
+> - **Not yet covered:** wire bonds, SPI paste, tombstone/skew, and validation on See3CAM frames. Until then those come from the analytical stub/synthetic generator.
+> - Weights are published as the GitHub release [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1), not committed to git. Full details: [`module_a_vision/README.md`](module_a_vision/README.md).
 
 ---
 
@@ -159,6 +172,13 @@ mkdir -p edge_llm_storage/weights
 curl -L -o edge_llm_storage/weights/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
   https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
 ```
+
+### 3b. Vision Model Weights (Optional vs. Fallback)
+Without weights, `VisionInferenceEngine` uses a Tier-0 analytical stub that returns fixed placeholder defects (it does not analyse the image). To run the real trained YOLOv8-OBB model:
+```bash
+python -m module_a_vision.download_weights    # -> module_a_vision/weights/smt_merged_v8s.pt (23 MB)
+```
+The engine, Cockpit UI and `benchmark_tier0.py` pick the weights up automatically. Tests always force the stub, so they pass either way.
 
 ### 4. Optical Stream & Camera Modes (Choose for your laptop)
 In the Cockpit UI header dropdown, select the source that matches your laptop setup:
