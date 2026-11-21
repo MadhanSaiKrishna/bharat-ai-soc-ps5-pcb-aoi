@@ -284,6 +284,7 @@ class CameraWorker(QThread):
             return
 
         cap = None
+        stream_url = None
         try:
             if isinstance(self.source, int):
                 # Try V4L2 first on Linux/WSL2
@@ -291,8 +292,8 @@ class CameraWorker(QThread):
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(self.source)
             elif isinstance(self.source, str) and "8080" in self.source:
-                # Try 127.0.0.1 loopback first
-                cap = cv2.VideoCapture("http://127.0.0.1:8080/video_feed")
+                stream_url = "http://127.0.0.1:8080/video_feed"
+                cap = cv2.VideoCapture(stream_url)
                 if not cap.isOpened():
                     # Fallback to WSL2 default gateway host IP if in NAT mode
                     host_ip = "127.0.0.1"
@@ -305,9 +306,11 @@ class CameraWorker(QThread):
                     except Exception:
                         pass
                     if host_ip != "127.0.0.1":
-                        cap = cv2.VideoCapture(f"http://{host_ip}:8080/video_feed")
+                        stream_url = f"http://{host_ip}:8080/video_feed"
+                        cap = cv2.VideoCapture(stream_url)
             else:
-                cap = cv2.VideoCapture(str(self.source))
+                stream_url = str(self.source)
+                cap = cv2.VideoCapture(stream_url)
 
             if not cap or not cap.isOpened():
                 if isinstance(self.source, str) and "8080" in self.source:
@@ -327,7 +330,6 @@ class CameraWorker(QThread):
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
             consecutive_failures = 0
-            max_failures = 3 if isinstance(self.source, int) else 45
             while self.running:
                 ret, bgr_frame = cap.read()
                 if ret and bgr_frame is not None:
@@ -335,9 +337,17 @@ class CameraWorker(QThread):
                     rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
                     img = Image.fromarray(rgb_frame)
                     self.frame_ready.emit(img)
+                    self.msleep(1)
                 else:
                     consecutive_failures += 1
-                    if consecutive_failures >= max_failures:
+                    # Transparent auto-reconnect for network streams
+                    if stream_url and self.running and consecutive_failures < 15:
+                        self.msleep(200)
+                        cap.release()
+                        cap = cv2.VideoCapture(stream_url)
+                        continue
+
+                    if consecutive_failures >= (3 if isinstance(self.source, int) else 15):
                         msg = (
                             "Optical camera stream timed out.\n\n"
                             "WSL2 Root Cause:\n"
@@ -352,8 +362,7 @@ class CameraWorker(QThread):
                         )
                         self.error_occurred.emit(msg)
                         break
-
-                self.msleep(33)  # ~30 FPS
+                    self.msleep(50)
         except Exception as e:
             self.error_occurred.emit(f"Camera stream exception: {str(e)}")
         finally:
