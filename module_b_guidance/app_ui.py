@@ -24,7 +24,7 @@ from typing import Dict, Any, Optional, List
 if "--headless" in sys.argv or os.environ.get("HEADLESS_TEST") == "1":
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, pyqtSlot, QTimer
 from PyQt6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QColor, QBrush, QFont, QPolygonF, QTransform
 )
@@ -54,6 +54,11 @@ try:
     from edge_llm_storage.dual_advisor import DualAdvisorEngine
 except ImportError:
     DualAdvisorEngine = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 
 class InspectionCanvas(QWidget):
@@ -276,6 +281,11 @@ class OperatorCockpitApp(QMainWindow):
         self.dfm_text: str = "Awaiting inspection cycle execution..."
         self.asm_text: str = "Awaiting inspection cycle execution..."
 
+        # Live Camera capture state
+        self.camera_cap = None
+        self.camera_timer = QTimer(self)
+        self.camera_timer.timeout.connect(self._read_camera_frame)
+
         self._apply_theme()
         self._build_ui()
         self.load_mock_event(SAMPLE_EVENT_PATH)
@@ -362,6 +372,18 @@ class OperatorCockpitApp(QMainWindow):
         ])
         self.checkpoint_combo.setStyleSheet("background-color: #1A202C; color: #FFFFFF; border: 1px solid #4A5568; padding: 4px;")
         h_layout.addWidget(self.checkpoint_combo)
+
+        h_layout.addSpacing(10)
+        h_layout.addWidget(QLabel("Optical Source:"))
+        self.source_combo = QComboBox()
+        self.source_combo.addItems([
+            "Synthetic PCB Simulator",
+            "Live UVC Camera (Index 0)",
+            "Live UVC Camera (Index 1)",
+        ])
+        self.source_combo.setStyleSheet("background-color: #1A202C; color: #FFFFFF; border: 1px solid #4A5568; padding: 4px;")
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        h_layout.addWidget(self.source_combo)
 
         h_layout.addStretch()
 
@@ -673,6 +695,58 @@ class OperatorCockpitApp(QMainWindow):
             f"Directory: data/telemetry_logs/",
         )
         self.status_bar.showMessage(f"Reports exported: {pdf_path.name}, {csv_path.name}")
+
+    def _on_source_changed(self, index: int):
+        source_name = self.source_combo.currentText()
+        if "Live UVC Camera" in source_name:
+            if cv2 is None:
+                QMessageBox.warning(
+                    self,
+                    "OpenCV Required",
+                    "OpenCV (cv2) is required for live optical camera streaming.\n"
+                    "Install opencv-python or use the Synthetic PCB Simulator.",
+                )
+                self.source_combo.setCurrentIndex(0)
+                return
+
+            device_id = 0 if "(Index 0)" in source_name else 1
+            self.camera_cap = cv2.VideoCapture(device_id)
+            if not self.camera_cap.isOpened():
+                QMessageBox.warning(
+                    self,
+                    "Camera Not Detected",
+                    f"Could not open optical device /dev/video{device_id}.\n"
+                    "Check USB connection or use Synthetic PCB Simulator.",
+                )
+                self.source_combo.setCurrentIndex(0)
+                self.camera_cap = None
+                return
+
+            self.status_bar.showMessage(f"Streaming optical feed from /dev/video{device_id}...")
+            self.camera_timer.start(33)  # ~30 FPS
+        else:
+            if self.camera_cap:
+                self.camera_timer.stop()
+                self.camera_cap.release()
+                self.camera_cap = None
+            self.status_bar.showMessage("Switched to Synthetic PCB Simulation mode.")
+            self.load_mock_event(SAMPLE_EVENT_PATH)
+
+    def _read_camera_frame(self):
+        if not self.camera_cap or not self.camera_cap.isOpened():
+            return
+        ret, bgr_frame = self.camera_cap.read()
+        if ret and bgr_frame is not None:
+            rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            self.camera_image = Image.fromarray(rgb_frame)
+            if self.cad_image:
+                self.canvas.set_frames(self.camera_image, self.cad_image)
+
+    def closeEvent(self, event):
+        if self.camera_cap:
+            self.camera_timer.stop()
+            self.camera_cap.release()
+        super().closeEvent(event)
 
 
 def main():
