@@ -62,8 +62,14 @@ class FiducialHomographyEngine:
         dst_pts = np.array(camera_fiducials_px, dtype=np.float32)
 
         if cv2 is not None:
-            H, status = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 3.0)
-            self.homography_matrix = H
+            if len(src_pts) >= 4:
+                H, status = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 3.0)
+                self.homography_matrix = H
+            else:
+                # For 3 fiducials, compute exact 2D affine / rigid transform embedded in 3x3 matrix
+                M = cv2.getAffineTransform(src_pts[:3], dst_pts[:3])
+                H = np.vstack([M, [0.0, 0.0, 1.0]])
+                self.homography_matrix = H
         else:
             # Fallback affine / rigid estimate if cv2 is not yet installed in host environment
             H = np.eye(3, dtype=np.float32)

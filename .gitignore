@@ -58,4 +58,6 @@ Thumbs.db
 
 # Telemetry & runtime logs
 *.log
+*.jsonl
+data/telemetry_logs/
 telemetry_output/
