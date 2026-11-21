@@ -223,6 +223,10 @@ class DualAdvisorEngine:
                 return f"DFM WARNING: Aperture ratio marginal at {cref}. Enlarge stencil aperture area ratio to >= 0.66 or add solder mask dam to prevent bridging on next PCB rev."
             elif "SKEWED" in dtype:
                 return f"DFM NOTE: Thermal imbalance detected at {cref}. Balance copper pour connections and equalize thermal relief traces across component pads."
+            elif "TOMBSTONE" in dtype:
+                return f"DFM NOTE: Tombstoning at {cref} indicates unequal pad wetting. Make both land patterns identical in size and equalize copper/thermal relief on each pad."
+            elif "ORIENTATION_ERROR" in dtype:
+                return f"DFM NOTE: Orientation/polarity error at {cref}. Add clear pin-1/cathode silkscreen marking visible after placement and verify CAD footprint rotation."
 
         return "DFM STATUS: No systematic layout-induced defect trends detected in rolling historical buffer."
 
@@ -242,6 +246,12 @@ class DualAdvisorEngine:
                 return f"CALIBRATION ACTION: Clean stencil underside with IPA wipes. Verify squeegee pressure and replenish Type 4 solder paste."
             elif "SKEWED_PASSIVE" in dtype:
                 return f"CALIBRATION ACTION: Check pick-and-place nozzle vacuum pressure on 0201 feeder and clean nozzle tip for {cref}."
+            elif "TOMBSTONE" in dtype:
+                return f"CALIBRATION ACTION: Tombstone at {cref}. Lengthen reflow soak to equalize pad temperatures and check paste volume is balanced on both pads."
+            elif "ORIENTATION_ERROR" in dtype:
+                return f"CALIBRATION ACTION: Orientation error at {cref}. Verify feeder tape orientation and part rotation/polarity in the placement program; quarantine the reel if parts are flipped."
+            elif "SHIFTED_COMPONENT" in dtype:
+                return f"CALIBRATION ACTION: Component shift at {cref}. Re-teach pick-and-place vision offsets for this part and check placement pressure and board support."
 
         return "CALIBRATION STATUS: Assembly parameters within normal statistical process control limits."
 
