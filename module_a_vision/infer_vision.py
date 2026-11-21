@@ -56,6 +56,7 @@ CLASS_CATEGORY = {
     # Component placement / body
     "SKEWED_PASSIVE": "SMT_PLACEMENT",
     "TOMBSTONE": "SMT_PLACEMENT",
+    "ORIENTATION_ERROR": "SMT_PLACEMENT",  # flipped chip / reversed polarity
     "MISSING_COMPONENT": "SMT_PLACEMENT",
     "SHIFTED_COMPONENT": "SMT_PLACEMENT",
     "PHYSICAL_DAMAGE": "SMT_PLACEMENT",
@@ -74,6 +75,7 @@ CLASS_SEVERITY = {
     "SHIFTED_COMPONENT": "HIGH",
     "SKEWED_PASSIVE": "HIGH",
     "TOMBSTONE": "HIGH",
+    "ORIENTATION_ERROR": "CRITICAL",  # reversed polarity is a functional failure
     "PHYSICAL_DAMAGE": "HIGH",
     "LOOP_SAG": "MEDIUM",
     "EXCESS_SOLDER": "MEDIUM",
