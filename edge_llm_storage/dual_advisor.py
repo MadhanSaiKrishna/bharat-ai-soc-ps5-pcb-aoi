@@ -60,9 +60,20 @@ class DualAdvisorEngine:
         self.prompts_path = prompts_path or DEFAULT_PROMPTS_PATH
         self.prompts = self._load_prompts()
         self.executorch_loaded = False
+        self.llm_loaded = False
+        self.llm = None
+        self.gguf_model_path = None
 
         if self.pte_model_path and os.path.exists(self.pte_model_path):
             self._init_executorch()
+        else:
+            # Check for local GGUF model in weights directory
+            weights_dir = Path(__file__).resolve().parent / "weights"
+            if weights_dir.exists():
+                gguf_files = list(weights_dir.glob("*.gguf"))
+                if gguf_files:
+                    self.gguf_model_path = str(gguf_files[0])
+                    self._init_llama_cpp()
 
     def _load_prompts(self) -> Dict[str, Any]:
         if self.prompts_path.exists():
@@ -79,6 +90,38 @@ class DualAdvisorEngine:
         except Exception as e:
             print(f"[DualAdvisor] ExecuTorch runtime not available, using high-speed edge heuristic fallback: {e}")
             self.executorch_loaded = False
+
+    def _init_llama_cpp(self):
+        try:
+            from llama_cpp import Llama
+            print(f"[DualAdvisor] Initializing on-device Llama 3.2 1B from {self.gguf_model_path}")
+            self.llm = Llama(
+                model_path=self.gguf_model_path,
+                n_ctx=512,
+                n_threads=4,
+                verbose=False,
+            )
+            self.llm_loaded = True
+            print("[DualAdvisor] Llama 3.2 1B neural inference engine online.")
+        except Exception as e:
+            print(f"[DualAdvisor] llama_cpp init error: {e}. Using deterministic fallback.")
+            self.llm_loaded = False
+
+    def _run_llm_infer(self, prompt: str, system_prompt: str) -> str:
+        if self.llm is not None:
+            try:
+                res = self.llm.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=55,
+                    temperature=0.2,
+                )
+                return res["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                print(f"[DualAdvisor] Generation error: {e}")
+        return ""
 
     def format_prompts(self, event: Dict[str, Any]) -> Tuple[str, str]:
         """Formats the input prompt for both branches."""
@@ -122,7 +165,14 @@ class DualAdvisorEngine:
         """Generates DFM and Assembler recommendations within the strict <40 words rule."""
         dfm_prompt, asm_prompt = self.format_prompts(event)
 
-        if self.executorch_loaded:
+        if self.llm_loaded:
+            dfm_cfg = self.prompts.get("branch_dfm", {})
+            asm_cfg = self.prompts.get("branch_assembler", {})
+            dfm_raw = self._run_llm_infer(dfm_prompt, dfm_cfg.get("system_prompt", ""))
+            asm_raw = self._run_llm_infer(asm_prompt, asm_cfg.get("system_prompt", ""))
+            dfm_response = dfm_raw if dfm_raw else self._heuristic_dfm(event)
+            asm_response = asm_raw if asm_raw else self._heuristic_assembler(event)
+        elif self.executorch_loaded:
             # Native on-device ExecuTorch execution
             dfm_response = self._run_executorch_infer(dfm_prompt, branch="dfm")
             asm_response = self._run_executorch_infer(asm_prompt, branch="assembler")
