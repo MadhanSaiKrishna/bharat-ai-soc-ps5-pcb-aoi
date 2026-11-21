@@ -123,34 +123,69 @@ bharat-ai-soc-ps5-pcb-aoi/
 
 ---
 
-## 6. Quickstart
+## 6. Quickstart & Teammate Laptop Onboarding Guide
 
-### 1. Environment Setup
+> [!IMPORTANT]
+> **To All Teammates (Member 1 Vision & Member 2 Edge SoC):**  
+> Before testing this branch on your local laptop, review the prerequisites and step-by-step instructions below. The Tier 0 pipeline is designed to run **out-of-the-box on any laptop with zero physical hardware required** (using synthetic and simulated fallbacks).
+
+### 1. Prerequisites
+- **OS:** Linux (Ubuntu 22.04/24.04), Windows 10/11 with WSL2 (WSLg for GUI), or macOS.
+- **Python:** 3.10, 3.11, or 3.12 (virtual environment strongly recommended).
+- **Display:** For GUI, ensure X11/Wayland/WSLg is active, or use `--headless` mode for headless environments.
+
+### 2. Environment Setup
 ```bash
-git clone <repo_url>
-cd bharat-ai-soc-ps5-pcb-aoi
+# 1. Switch to the verified Tier 0 baseline branch
+git checkout feat/tier0-baseline
+
+# 2. Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate       # On Linux / WSL2
+# .\venv\Scripts\activate     # On Windows PowerShell
+
+# 3. Install core dependencies
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 2. Verify Schema & Run Mock End-to-End Pipeline
+### 3. On-Device LLM Weights Setup (Optional vs. Fallback)
+The repository includes an automatic, high-speed deterministic heuristic fallback in `edge_llm_storage/dual_advisor.py`. **You can run all tests and the cockpit UI immediately without downloading any model weights.**
+
+If you want to run live neural inference using the local Meta Llama 3.2 1B-Instruct model:
 ```bash
-python3 edge_llm_storage/dual_advisor.py --mock-input schemas/sample_inspection_event.json
+mkdir -p edge_llm_storage/weights
+# Download quantized GGUF (771 MB):
+curl -L -o edge_llm_storage/weights/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+  https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
 ```
 
-### 3. Run Regression & Contract Tests
+### 4. Optical Stream & Camera Modes (Choose for your laptop)
+In the Cockpit UI header dropdown, select the source that matches your laptop setup:
+- **`Synthetic PCB Simulator` (Default - Zero Hardware Needed):** Generates photorealistic high-res PCB frames with fiducials and components. Works on every laptop.
+- **`Load Optical Image from Disk...` (Zero Hardware Needed):** Allows loading any custom PCB image (`.png`, `.jpg`) directly.
+- **`Live UVC Camera (Index 0 /dev/video0)`:** For native Linux webcams/cameras. Ensure permissions: `sudo chmod 666 /dev/video*`.
+- **`Live Windows Stream (http://localhost:8080/video_feed)`:** If running in WSL2 with an external USB camera (e.g. See3CAM_CU30) or Windows webcam:
+  1. In Windows PowerShell:
+     ```powershell
+     python tools\stream_camera_windows.py --preview
+     ```
+  2. In Linux UI: select `Live Windows Stream`. (Achieves smooth 15 FPS streaming with zero WSL2 packet drops).
+
+### 5. Verification Commands (Run these 3 checks)
 ```bash
+# A. Run full contract, vision, and UI test suite (12 tests)
 python3 -m pytest tests/
-```
 
-### 4. Run Tier 0 Performance Benchmark
-```bash
+# B. Run the Tier 0 performance benchmark (15 cycles)
 python3 benchmark_tier0.py 15
-```
 
-### 5. Launch the Operator Cockpit & Live Quality Copilot UI
-```bash
+# C. Launch the interactive Operator Cockpit UI
 python3 module_b_guidance/app_ui.py
 # Or with a pre-loaded customer Gerber package:
 python3 module_b_guidance/app_ui.py --gerber data/sample_gerbers/CUSTOMER_PCB_JOB_REV1.zip
+# Or in headless verification mode (for CI or systems without displays):
+python3 module_b_guidance/app_ui.py --headless
 ```
+
 *(In the Cockpit, press **Spacebar** or click **"🚀 Inspect Current Board"** to run the live inspection cycle, evaluate the 5-stage gate & BGA checklist, generate Llama 3.2 1B dual advisories, and log telemetry).*

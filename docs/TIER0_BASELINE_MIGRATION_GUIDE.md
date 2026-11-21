@@ -225,28 +225,64 @@ When moving code from this `feat/tier0-baseline` branch onto the physical ZCU104
 
 ---
 
-## 5. How to Run & Verify the Tier 0 Baseline Today
+## 5. Teammate Laptop Onboarding & Verification Guide
 
-### 5.1. Run Full Regression & Contract Verification
+> [!IMPORTANT]
+> **To All Team Members (Member 1 Vision & Member 2 Edge SoC):**  
+> When you pull the `feat/tier0-baseline` branch onto your developer laptop, follow this exact guide to test and verify the baseline. **No edge hardware, physical camera rig, or GPU is required to test this branch.**
+
+### 5.1. System & Virtual Environment Setup
 ```bash
-# Run all unit tests (schema contract, vision inference, guidance UI modules)
+# 1. Checkout the verified Tier 0 baseline branch
+git checkout feat/tier0-baseline
+
+# 2. Set up virtual environment
+python3 -m venv venv
+source venv/bin/activate       # On Linux / WSL2
+# .\venv\Scripts\activate     # On Windows PowerShell
+
+# 3. Install Python dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 5.2. Optional: Local Meta Llama 3.2 1B Model Weights
+- **Built-in Fallback:** If you do not download the model, `edge_llm_storage/dual_advisor.py` automatically uses the deterministic heuristic fallback engine. All tests and GUI features will run without issue.
+- **Real Neural Generation:** If you wish to run the real quantized 4-bit Llama 3.2 1B LLM:
+  ```bash
+  mkdir -p edge_llm_storage/weights
+  curl -L -o edge_llm_storage/weights/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+    https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+  ```
+
+### 5.3. Camera Feed Modes on Developer Laptops
+Select the appropriate mode in the UI top dropdown:
+1. **`Synthetic PCB Simulator` (Default):** Zero hardware needed. Simulates photorealistic PCB sensor frames.
+2. **`Load Optical Image from Disk...`:** Zero hardware needed. Allows loading any `.png`/`.jpg` file.
+3. **`Live Windows Stream (http://localhost:8080/video_feed)`:** If running inside WSL2 with an external USB camera (e.g. See3CAM_CU30) or Windows webcam:
+   - In Windows PowerShell: `python tools\stream_camera_windows.py --preview`
+   - In UI: select `Live Windows Stream`.
+4. **`Live UVC Camera (Index 0 /dev/video0)`:** For native Linux webcams (`sudo chmod 666 /dev/video*`).
+
+### 5.4. Verification Commands (Run Before Writing Code)
+```bash
+# 1. Run full unit and contract test suite (12 tests)
 python3 -m pytest tests/
-```
 
-### 5.2. Run the Tier 0 Performance Benchmark
-```bash
-# Evaluates cycle time, RAM usage, and 40-word advisory compliance over 15 iterations
+# 2. Run Tier 0 Master Performance Benchmark (15 cycles)
 python3 benchmark_tier0.py 15
-```
 
-### 5.3. Launch the Interactive Operator Cockpit UI
-```bash
-# Launches the 5-stage PyQt6 operator UI
+# 3. Launch the 5-Stage Operator Cockpit GUI
 python3 module_b_guidance/app_ui.py
+# Or with customer Gerber pre-loaded:
+python3 module_b_guidance/app_ui.py --gerber data/sample_gerbers/CUSTOMER_PCB_JOB_REV1.zip
+# Or in headless mode (for CI / environments without displays):
+python3 module_b_guidance/app_ui.py --headless
 ```
-*(If running on WSL2 without a camera attached, simply click the **"Load Optical Image from Disk..."** button to feed any synthetic or benchmark PCB image).*
 
-### 5.4. Test Standalone LLM Closed-Loop Generation
+*(Inside the UI, press **Spacebar** or click **"🚀 Inspect Current Board"** to execute the live inspection cycle, evaluate the 5-stage checklist, generate closed-loop advisories, and log to telemetry).*
+
+### 5.5. Standalone LLM Closed-Loop Generation Test
 ```bash
 python3 edge_llm_storage/dual_advisor.py --mock-input schemas/sample_inspection_event.json
 ```
