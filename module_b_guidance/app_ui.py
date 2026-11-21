@@ -386,6 +386,7 @@ class OperatorCockpitApp(QMainWindow):
             "Synthetic PCB Simulator",
             "Live UVC Camera (Index 0)",
             "Live UVC Camera (Index 1)",
+            "Load Optical Image from Disk...",
         ])
         self.source_combo.setStyleSheet("background-color: #1A202C; color: #FFFFFF; border: 1px solid #4A5568; padding: 4px;")
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
@@ -760,20 +761,56 @@ class OperatorCockpitApp(QMainWindow):
                 return
 
             device_id = 0 if "(Index 0)" in source_name else 1
-            self.camera_cap = cv2.VideoCapture(device_id)
+            # Try V4L2 on Linux/WSL2 first, then generic fallback
+            self.camera_cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
             if not self.camera_cap.isOpened():
-                QMessageBox.warning(
-                    self,
-                    "Camera Not Detected",
-                    f"Could not open optical device /dev/video{device_id}.\n"
-                    "Check USB connection or use Synthetic PCB Simulator.",
-                )
+                self.camera_cap = cv2.VideoCapture(device_id)
+
+            if not self.camera_cap.isOpened():
+                import glob
+                devs = glob.glob("/dev/video*")
+                if not devs:
+                    msg = (
+                        f"No /dev/video* devices found in Linux.\n\n"
+                        f"If you are running inside WSL2 on Windows:\n"
+                        f"USB cameras are managed by Windows and must be attached to WSL2.\n"
+                        f"Run in Windows PowerShell (Admin):\n"
+                        f"   1. usbipd list\n"
+                        f"   2. usbipd bind --busid <BUSID>\n"
+                        f"   3. usbipd attach --wsl --busid <BUSID>\n\n"
+                        f"You can also use 'Load Optical Image from Disk...' to load any photo."
+                    )
+                else:
+                    msg = f"Device /dev/video{device_id} could not be opened. Found devices: {devs}."
+
+                QMessageBox.warning(self, "Camera Device Not Opened", msg)
                 self.source_combo.setCurrentIndex(0)
                 self.camera_cap = None
                 return
 
-            self.status_bar.showMessage(f"Streaming optical feed from /dev/video{device_id}...")
+            self.status_bar.showMessage(f"Streaming live optical feed from /dev/video{device_id}...")
             self.camera_timer.start(33)  # ~30 FPS
+
+        elif "Load Optical Image" in source_name:
+            if self.camera_cap:
+                self.camera_timer.stop()
+                self.camera_cap.release()
+                self.camera_cap = None
+
+            img_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Optical PCB Image",
+                str(REPO_ROOT),
+                "Image Files (*.png *.jpg *.jpeg *.bmp *.tiff)",
+            )
+            if img_path and os.path.exists(img_path):
+                self.camera_image = Image.open(img_path).convert("RGBA")
+                if self.cad_image:
+                    self.canvas.set_frames(self.camera_image, self.cad_image)
+                self.status_bar.showMessage(f"Loaded optical frame from: {Path(img_path).name}")
+            else:
+                self.source_combo.setCurrentIndex(0)
+
         else:
             if self.camera_cap:
                 self.camera_timer.stop()
