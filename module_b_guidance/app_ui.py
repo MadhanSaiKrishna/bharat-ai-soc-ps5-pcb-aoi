@@ -24,7 +24,7 @@ from typing import Dict, Any, Optional, List
 if "--headless" in sys.argv or os.environ.get("HEADLESS_TEST") == "1":
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, pyqtSlot, QTimer
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, pyqtSlot, QTimer, QThread
 from PyQt6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QColor, QBrush, QFont, QPolygonF, QTransform
 )
@@ -264,6 +264,83 @@ class OperatorIngestDialog(QDialog):
         }
 
 
+class CameraWorker(QThread):
+    """
+    Asynchronous camera worker thread.
+    Prevents blocking the PyQt6 GUI thread on slow or timing-out camera streams
+    (e.g. over WSL2 usbipd bridge or network streams).
+    """
+    frame_ready = pyqtSignal(object)  # PIL.Image
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, source):
+        super().__init__()
+        self.source = source
+        self.running = True
+
+    def run(self):
+        if cv2 is None:
+            self.error_occurred.emit("OpenCV (cv2) is not installed.")
+            return
+
+        cap = None
+        try:
+            if isinstance(self.source, int):
+                # Try V4L2 first on Linux/WSL2
+                cap = cv2.VideoCapture(self.source, cv2.CAP_V4L2)
+                if not cap.isOpened():
+                    cap = cv2.VideoCapture(self.source)
+            else:
+                cap = cv2.VideoCapture(str(self.source))
+
+            if not cap or not cap.isOpened():
+                self.error_occurred.emit(f"Could not open optical stream '{self.source}'.")
+                return
+
+            if isinstance(self.source, int):
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+            consecutive_failures = 0
+            while self.running:
+                ret, bgr_frame = cap.read()
+                if ret and bgr_frame is not None:
+                    consecutive_failures = 0
+                    rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(rgb_frame)
+                    self.frame_ready.emit(img)
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures >= 3:
+                        msg = (
+                            "Optical camera stream timed out.\n\n"
+                            "WSL2 Root Cause:\n"
+                            "In WSL2, high-resolution USB 3.0 UVC cameras (like See3CAM_CU30) suffer from "
+                            "virtual host controller bandwidth packet drops (vhci_hcd: urb->status -104 ECONNRESET).\n\n"
+                            "Zero-Latency Recommended Solution:\n"
+                            "1. Run the native Windows bridge in PowerShell:\n"
+                            "      python tools/stream_camera_windows.py\n"
+                            "2. In this UI, select:\n"
+                            "      'Live Windows Stream (http://localhost:8080/video_feed)'\n\n"
+                            "Or click 'Load Optical Image from Disk...' to load a PCB image directly."
+                        )
+                        self.error_occurred.emit(msg)
+                        break
+
+                self.msleep(33)  # ~30 FPS
+        except Exception as e:
+            self.error_occurred.emit(f"Camera stream exception: {str(e)}")
+        finally:
+            if cap:
+                cap.release()
+
+    def stop(self):
+        self.running = False
+        self.quit()
+        self.wait(1000)
+
+
 class OperatorCockpitApp(QMainWindow):
     """Main Industrial AOI Cockpit GUI."""
 
@@ -287,10 +364,8 @@ class OperatorCockpitApp(QMainWindow):
         self.dfm_text: str = "Awaiting inspection cycle execution..."
         self.asm_text: str = "Awaiting inspection cycle execution..."
 
-        # Live Camera capture state
-        self.camera_cap = None
-        self.camera_timer = QTimer(self)
-        self.camera_timer.timeout.connect(self._read_camera_frame)
+        # Asynchronous non-blocking camera worker
+        self.camera_worker: Optional[CameraWorker] = None
 
         self._apply_theme()
         self._build_ui()
@@ -384,8 +459,9 @@ class OperatorCockpitApp(QMainWindow):
         self.source_combo = QComboBox()
         self.source_combo.addItems([
             "Synthetic PCB Simulator",
-            "Live UVC Camera (Index 0)",
-            "Live UVC Camera (Index 1)",
+            "Live UVC Camera (Index 0 - /dev/video0)",
+            "Live UVC Camera (Index 1 - /dev/video1)",
+            "Live Windows Stream (http://localhost:8080/video_feed)",
             "Load Optical Image from Disk...",
         ])
         self.source_combo.setStyleSheet("background-color: #1A202C; color: #FFFFFF; border: 1px solid #4A5568; padding: 4px;")
@@ -747,8 +823,33 @@ class OperatorCockpitApp(QMainWindow):
         )
         self.status_bar.showMessage(f"Reports exported: {pdf_path.name}, {csv_path.name}")
 
+    def _stop_camera_worker(self):
+        if self.camera_worker:
+            try:
+                self.camera_worker.frame_ready.disconnect()
+                self.camera_worker.error_occurred.disconnect()
+            except Exception:
+                pass
+            self.camera_worker.stop()
+            self.camera_worker = None
+
+    def _on_camera_frame_ready(self, frame_img: Image.Image):
+        self.camera_image = frame_img
+        if self.cad_image:
+            self.canvas.set_frames(self.camera_image, self.cad_image)
+
+    def _on_camera_error(self, err_msg: str):
+        self._stop_camera_worker()
+        self.source_combo.blockSignals(True)
+        self.source_combo.setCurrentIndex(0)
+        self.source_combo.blockSignals(False)
+        self.status_bar.showMessage("Camera stream halted: returned to Synthetic simulation.")
+        QMessageBox.warning(self, "Camera Stream Notice", err_msg)
+
     def _on_source_changed(self, index: int):
         source_name = self.source_combo.currentText()
+        self._stop_camera_worker()
+
         if "Live UVC Camera" in source_name:
             if cv2 is None:
                 QMessageBox.warning(
@@ -760,54 +861,58 @@ class OperatorCockpitApp(QMainWindow):
                 self.source_combo.setCurrentIndex(0)
                 return
 
-            device_id = 0 if "(Index 0)" in source_name else 1
-            # Try V4L2 on Linux/WSL2 first, then generic fallback
-            self.camera_cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-            if not self.camera_cap.isOpened():
-                self.camera_cap = cv2.VideoCapture(device_id)
+            device_id = 0 if "Index 0" in source_name else 1
+            dev_path = f"/dev/video{device_id}"
 
-            if not self.camera_cap.isOpened():
-                import glob
-                import os
-                devs = glob.glob("/dev/video*")
-                dev_path = f"/dev/video{device_id}"
-                has_rw = os.access(dev_path, os.R_OK | os.W_OK) if os.path.exists(dev_path) else False
-
-                if not devs:
-                    msg = (
-                        f"No /dev/video* devices found in Linux.\n\n"
-                        f"If you are running inside WSL2 on Windows:\n"
-                        f"USB cameras are managed by Windows and must be attached to WSL2.\n"
-                        f"Run in Windows PowerShell (Admin):\n"
-                        f"   1. usbipd list\n"
-                        f"   2. usbipd bind --busid <BUSID>\n"
-                        f"   3. usbipd attach --wsl --busid <BUSID>\n\n"
-                        f"You can also use 'Load Optical Image from Disk...' to load any photo."
-                    )
-                elif not has_rw:
-                    msg = (
-                        f"Found camera device '{dev_path}', but Linux permission was denied.\n\n"
-                        f"Run this command in your terminal to grant read/write access:\n"
-                        f"   sudo chmod 666 /dev/video*\n\n"
-                        f"Then re-select the camera in the dropdown."
-                    )
-                else:
-                    msg = f"Device /dev/video{device_id} could not be opened. Found devices: {devs}."
-
-                QMessageBox.warning(self, "Camera Device Not Opened", msg)
+            import glob
+            devs = glob.glob("/dev/video*")
+            if not devs:
+                msg = (
+                    f"No /dev/video* devices found in Linux.\n\n"
+                    f"If you are running inside WSL2 on Windows:\n"
+                    f"USB cameras are managed by Windows and must be attached to WSL2.\n"
+                    f"Run in Windows PowerShell (Admin):\n"
+                    f"   1. usbipd list\n"
+                    f"   2. usbipd bind --busid <BUSID>\n"
+                    f"   3. usbipd attach --wsl --busid <BUSID>\n\n"
+                    f"Alternatively, stream from Windows via 'Live Windows Stream' (http://localhost:8080/video_feed)."
+                )
+                QMessageBox.warning(self, "No Video Device", msg)
                 self.source_combo.setCurrentIndex(0)
-                self.camera_cap = None
                 return
 
-            self.status_bar.showMessage(f"Streaming live optical feed from /dev/video{device_id}...")
-            self.camera_timer.start(33)  # ~30 FPS
+            has_rw = os.access(dev_path, os.R_OK | os.W_OK) if os.path.exists(dev_path) else False
+            if not has_rw:
+                msg = (
+                    f"Found camera device '{dev_path}', but Linux permission was denied.\n\n"
+                    f"Run this command in your terminal to grant read/write access:\n"
+                    f"   sudo chmod 666 /dev/video*\n\n"
+                    f"Then re-select the camera in the dropdown."
+                )
+                QMessageBox.warning(self, "Camera Permission Denied", msg)
+                self.source_combo.setCurrentIndex(0)
+                return
+
+            self.status_bar.showMessage(f"Connecting to non-blocking optical feed on {dev_path}...")
+            self.camera_worker = CameraWorker(device_id)
+            self.camera_worker.frame_ready.connect(self._on_camera_frame_ready)
+            self.camera_worker.error_occurred.connect(self._on_camera_error)
+            self.camera_worker.start()
+
+        elif "Live Windows Stream" in source_name:
+            if cv2 is None:
+                QMessageBox.warning(self, "OpenCV Required", "OpenCV (cv2) is required for network streams.")
+                self.source_combo.setCurrentIndex(0)
+                return
+
+            url = "http://localhost:8080/video_feed"
+            self.status_bar.showMessage(f"Connecting to Windows bridge stream at {url}...")
+            self.camera_worker = CameraWorker(url)
+            self.camera_worker.frame_ready.connect(self._on_camera_frame_ready)
+            self.camera_worker.error_occurred.connect(self._on_camera_error)
+            self.camera_worker.start()
 
         elif "Load Optical Image" in source_name:
-            if self.camera_cap:
-                self.camera_timer.stop()
-                self.camera_cap.release()
-                self.camera_cap = None
-
             img_path, _ = QFileDialog.getOpenFileName(
                 self,
                 "Select Optical PCB Image",
@@ -823,27 +928,11 @@ class OperatorCockpitApp(QMainWindow):
                 self.source_combo.setCurrentIndex(0)
 
         else:
-            if self.camera_cap:
-                self.camera_timer.stop()
-                self.camera_cap.release()
-                self.camera_cap = None
             self.status_bar.showMessage("Switched to Synthetic PCB Simulation mode.")
             self.load_mock_event(SAMPLE_EVENT_PATH)
 
-    def _read_camera_frame(self):
-        if not self.camera_cap or not self.camera_cap.isOpened():
-            return
-        ret, bgr_frame = self.camera_cap.read()
-        if ret and bgr_frame is not None:
-            rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
-            self.camera_image = Image.fromarray(rgb_frame)
-            if self.cad_image:
-                self.canvas.set_frames(self.camera_image, self.cad_image)
-
     def closeEvent(self, event):
-        if self.camera_cap:
-            self.camera_timer.stop()
-            self.camera_cap.release()
+        self._stop_camera_worker()
         super().closeEvent(event)
 
 
