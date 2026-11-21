@@ -1,0 +1,23 @@
+# Member 3: Operator UI Cockpit & Guidance Dependencies
+# Lightweight, fast-installing requirements (no heavy torch/CUDA binaries needed)
+
+# GUI Framework
+PyQt6>=6.6.0
+
+# Computer Vision & Video Rig (headless is fast and avoids Qt library conflicts)
+opencv-python-headless>=4.9.0
+
+# Image & Gerber CAD Processing
+Pillow>=10.2.0
+pygerber>=2.1.0
+
+# Compliance Reporting (PDF & CSV)
+reportlab>=4.1.0
+
+# Configuration & Data Contract Validation
+pyyaml>=6.0.1
+jsonschema>=4.21.0
+pydantic>=2.6.0
+
+# Testing
+pytest>=8.0.0
