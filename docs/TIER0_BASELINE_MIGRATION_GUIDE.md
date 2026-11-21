@@ -60,26 +60,28 @@ This document serves as the **official reference manual** detailing:
 
 ---
 
-### 3.2. Optical Image Acquisition: Laptop USB / Disk Fallback vs. Industrial Camera Rig
+### 3.2. Optical Image Acquisition: Native Linux vs. WSL2 vs. Industrial Camera Rig
 
 #### Tier 0 Implementation:
-- **Location:** `module_b_guidance/app_ui.py` (`CameraWorker` thread) and `test_camera.py`.
-- **Input Channels:**
-  1. Standard USB UVC camera plugged into the laptop's USB port (`/dev/video0`, `/dev/video1`, etc.).
-  2. In WSL2 environments (where USB devices are initially claimed by Windows), support for attaching via `usbipd-win`.
-  3. Built-in **"Load Optical Image from Disk..."** fallback button, allowing developers and evaluators to feed synthetic or reference PCB high-res photos without any camera plugged in.
-- **Why it was modified:** Ensures testing is never blocked if a developer is working remotely, in an office without a camera, or inside a virtualized WSL2 sandbox.
+- **Location:** `module_b_guidance/app_ui.py` (`CameraWorker` thread), `test_camera.py`, and `tools/stream_camera_windows.py`.
+- **Supported Input Channels:**
+  1. **Native Linux Laptops (Ubuntu, Fedora, Arch, Debian):**
+     - Teammates running bare-metal Linux plug the camera directly into their USB port.
+     - Linux kernel talks directly to the hardware via native V4L2 (`/dev/video0`).
+     - Selected in UI via: **`Live UVC Camera (Index 0 - /dev/video0)`**. Zero latency, 30–60 FPS, no bridge scripts needed.
+  2. **Windows WSL2 Developers:**
+     - WSL2 is a virtual machine and virtual USB/IP bridges (`usbipd-win`) frequently drop high-bandwidth USB 3.0 isochronous video packets (`vhci_hcd -104 ECONNRESET`).
+     - WSL2 users run `python tools/stream_camera_windows.py` on the Windows host and select **`Live Windows Stream (http://localhost:8080/video_feed)`** in the UI. OpenCV treats both identically as live frame streams.
+  3. **Synthetic PCB Simulator:**
+     - Runs without any camera attached; renders procedural PCB boards with realistic substrate texture.
+  4. **Disk Image Loader:**
+     - Allows loading static high-resolution PCB optical photos (`.png`, `.jpg`, `.tiff`) for repeatable defect benchmarks.
+- **Why it was modified:** Guarantees that any team member—whether on pure Linux, WSL2, or a machine without any physical camera—can run and verify the live inspection pipeline without friction.
 
 #### Edge Target (ZCU104):
 - **Target Hardware:** Industrial 5–8 MP Global Shutter Camera with C-Mount telecentric lens (to eliminate perspective distortion on tall BGA/QFP packages) and diffuse LED ring light.
-- **Interface:** UVC USB 3.0 via ZCU104 USB3 host port or MIPI-CSI2 mezzanine card connected to FPGA I/O pins.
-- **Triggering:** Hardware optocoupled GPIO trigger synced with conveyor belt indexer (via Linux `/dev/uio*` or PetaLinux GPIO sysfs).
-- **Porting Step:**
-  - Configure V4L2 pipeline in PetaLinux:
-    ```bash
-    v4l2-ctl -d /dev/video0 --set-fmt-video=width=3840,height=2160,pixelformat=YUYV
-    ```
-  - Lock camera capture exposure and white balance to manual in `app_ui.py` to prevent lighting drift under shop-floor factory lights.
+- **Interface:** Direct UVC USB 3.0 via ZCU104 USB3 host port or MIPI-CSI2 mezzanine card connected to FPGA I/O pins.
+- **Why Native Linux is Identical to ZCU104:** The ZCU104 runs embedded PetaLinux (bare-metal Linux). Therefore, the exact code used by teammates on **Native Linux (`/dev/video0`)** is 100% identical to the code that runs on the ZCU104 board! Only WSL2 requires the local network bridge.
 
 ---
 
