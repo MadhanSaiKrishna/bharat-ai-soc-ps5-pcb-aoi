@@ -117,6 +117,10 @@ bharat-ai-soc-ps5-pcb-aoi/
 | **Tier 2** | ZCU104 Cortex-A53 (KleidiAI) | INT8 PTQ | < 1500 ms | < 6 s | ≤ 8.0 s | < 1200 MB | ≥ 85% mAP@0.5 |
 | **Tier 3** | Vision DPU (PL) + LLM (PS) | INT8 + INT4 | < 400 ms | < 3 s | ≤ 3.5 s | < 1100 MB | ≥ 85% mAP@0.5 |
 
+> [!NOTE]
+> **Tier 0 Implementation & Edge Migration Guide:**  
+> For complete documentation of all Tier 0 workstation/laptop accommodations (local storage buffers, laptop USB/disk image loaders, local GGUF Llama runtime) and their corresponding target mappings on the AMD Xilinx ZCU104 MPSoC, see the [Tier 0 Baseline & Edge Migration Guide](docs/TIER0_BASELINE_MIGRATION_GUIDE.md).
+
 ---
 
 ## 6. Quickstart
