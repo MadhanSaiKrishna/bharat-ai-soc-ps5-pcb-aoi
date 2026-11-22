@@ -179,9 +179,11 @@ class DualAdvisorEngine:
             dfm_response = self._run_executorch_infer(dfm_prompt, branch="dfm")
             asm_response = self._run_executorch_infer(asm_prompt, branch="assembler")
         else:
-            # Deterministic, expert-rule baseline generator (for Workstation Tier 0 testing)
-            dfm_response = self._heuristic_dfm(event)
-            asm_response = self._heuristic_assembler(event)
+            raise RuntimeError(
+                "[DualAdvisor] CRITICAL: Real neural LLM model (Llama-3.2 GGUF or ExecuTorch PTE) is not loaded! "
+                "Ensure Llama-3.2-1B-Instruct-Q4_K_M.gguf exists in edge_llm_storage/weights/ "
+                "and llama-cpp-python is installed. Backup heuristics are disabled."
+            )
 
         return {
             "dfm_layout_advisory": self._enforce_word_limit(dfm_response, max_words=38),

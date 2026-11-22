@@ -99,12 +99,23 @@ class VisionInferenceEngine:
         self.model = None
         self.model_weights = model_weights
 
-        if model_weights and Path(model_weights).exists() and HAS_ULTRALYTICS:
-            try:
-                self.model = YOLO(str(model_weights))
-                print(f"[VisionEngine] Loaded YOLOv8-OBB model from {model_weights}")
-            except Exception as e:
-                print(f"[VisionEngine] Could not load model: {e}. Falling back to Tier-0 analytical engine.")
+        if not HAS_ULTRALYTICS:
+            raise RuntimeError(
+                "[VisionEngine] CRITICAL: 'ultralytics' (PyTorch) is not installed in the environment. "
+                "The real YOLOv8-OBB neural model cannot run without it."
+            )
+
+        if not model_weights or not Path(model_weights).exists():
+            raise FileNotFoundError(
+                f"[VisionEngine] CRITICAL: Real YOLOv8-OBB weights not found at '{model_weights}'. "
+                f"Please download real weights using: python -m module_a_vision.download_weights"
+            )
+
+        try:
+            self.model = YOLO(str(model_weights))
+            print(f"[VisionEngine] Loaded YOLOv8-OBB model from {model_weights}")
+        except Exception as e:
+            raise RuntimeError(f"[VisionEngine] Failed to load YOLOv8 model from {model_weights}: {e}")
 
     def detect_defects(
         self,
@@ -127,18 +138,17 @@ class VisionInferenceEngine:
 
         h, w = img_np.shape[:2]
 
-        # 1. Run Ultralytics YOLOv8-OBB if loaded
+        # 1. Run Ultralytics YOLOv8-OBB
         if self.model is not None:
             results = self.model.predict(img_np, conf=self.conf_threshold, verbose=False)
             defects = self._parse_yolo_obb_results(results[0])
             latency_ms = (time.perf_counter() - t0) * 1000.0
             return defects, latency_ms
 
-        # 2. Tier 0 Analytical / Synthetic Detector
-        # High-performance baseline evaluating optical features and component regions
-        defects = self._analytical_inspection(img_np, checkpoint)
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        return defects, latency_ms
+        raise RuntimeError(
+            "[VisionEngine] CRITICAL: Real YOLOv8-OBB model is not loaded. "
+            "Backup analytical models are disabled."
+        )
 
     def _analytical_inspection(self, img_np: np.ndarray, checkpoint: str) -> List[Dict[str, Any]]:
         """Analytical defect detection baseline for Tier 0 PC."""

@@ -44,6 +44,7 @@ runs/
 
 # Large test images & RAW defect dumps
 data/operator_ingest_queue/raw_dumps/
+data/raw_defect_dumps/
 *.raw
 *.tar.gz
 *.zip
