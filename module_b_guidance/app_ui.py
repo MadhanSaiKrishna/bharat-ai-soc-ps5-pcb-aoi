@@ -413,7 +413,7 @@ class OperatorCockpitApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bharat AI-SoC PS5 PCB AOI - Operator Cockpit & Quality-Control Copilot")
-        self.resize(1340, 860)
+        self.resize(1180, 720)
 
         # Subsystems
         self.gerber_renderer = GerberRenderer()
@@ -683,49 +683,7 @@ class OperatorCockpitApp(QMainWindow):
         asm_box_layout.addWidget(self.asm_view)
         adv_layout.addWidget(asm_box)
 
-        btn_regen_adv = QPushButton("↻ Refresh Dual Advisories")
-        btn_regen_adv.clicked.connect(self._run_advisory_inference)
-        adv_layout.addWidget(btn_regen_adv)
-
         self.tabs.addTab(tab_advisory, "Copilot Advisories")
-
-        # Tab 4: Production Yield & Telemetry Log
-        tab_telemetry = QWidget()
-        telem_layout = QVBoxLayout(tab_telemetry)
-
-        # Yield Stat Cards
-        stats_card = QWidget()
-        stats_card.setStyleSheet("background-color: #1A202C; border: 1px solid #2D3748; border-radius: 6px; padding: 10px;")
-        sc_layout = QHBoxLayout(stats_card)
-
-        self.lbl_fpy_stat = QLabel("FPY: --%")
-        self.lbl_fpy_stat.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        self.lbl_fpy_stat.setStyleSheet("color: #68D391;")
-        sc_layout.addWidget(self.lbl_fpy_stat)
-
-        self.lbl_boards_stat = QLabel("Inspected: 0")
-        self.lbl_boards_stat.setFont(QFont("Segoe UI", 12))
-        self.lbl_boards_stat.setStyleSheet("color: #E2E8F0;")
-        sc_layout.addWidget(self.lbl_boards_stat)
-
-        self.lbl_verdict_stat = QLabel("Passed: 0 | Rework: 0")
-        self.lbl_verdict_stat.setFont(QFont("Segoe UI", 12))
-        self.lbl_verdict_stat.setStyleSheet("color: #CBD5E0;")
-        sc_layout.addWidget(self.lbl_verdict_stat)
-
-        telem_layout.addWidget(stats_card)
-
-        # Defect Pareto / History Summary
-        self.telem_summary = QTextEdit()
-        self.telem_summary.setReadOnly(True)
-        self.telem_summary.setStyleSheet("background-color: #1A202C; color: #CBD5E0; font-family: monospace; font-size: 10pt; border: 1px solid #2D3748;")
-        telem_layout.addWidget(self.telem_summary)
-
-        btn_refresh_telem = QPushButton("↻ Refresh Telemetry Yield Metrics")
-        btn_refresh_telem.clicked.connect(self._refresh_telemetry_metrics)
-        telem_layout.addWidget(btn_refresh_telem)
-
-        self.tabs.addTab(tab_telemetry, "Yield & Telemetry")
 
         r_layout.addWidget(self.tabs)
         splitter.addWidget(right_panel)
@@ -736,25 +694,15 @@ class OperatorCockpitApp(QMainWindow):
         # 3. Bottom Action Bar
         action_bar = QHBoxLayout()
 
-        btn_cycle = QPushButton("🚀 Run Inspection Cycle (Space)")
-        btn_cycle.setStyleSheet("background-color: #2F855A; color: #FFFFFF; font-weight: bold; padding: 10px 18px; font-size: 11pt; border: 1px solid #38A169;")
-        btn_cycle.clicked.connect(self._run_cycle)
-        action_bar.addWidget(btn_cycle)
-
-        btn_crop = QPushButton("🚩 Flag Custom Anomaly (Crop)")
-        btn_crop.setStyleSheet("background-color: #2C7A7B; padding: 10px 18px; font-size: 11pt;")
+        btn_crop = QPushButton("🚩 Flag Custom Anomaly (Active Learning Crop)")
+        btn_crop.setStyleSheet("background-color: #2C7A7B; color: #FFFFFF; font-weight: bold; padding: 7px 14px; font-size: 10pt; border-radius: 4px;")
         btn_crop.clicked.connect(self._enable_crop_mode)
         action_bar.addWidget(btn_crop)
-
-        btn_load = QPushButton("📂 Load Event JSON")
-        btn_load.setStyleSheet("background-color: #4A5568; padding: 10px 18px; font-size: 11pt;")
-        btn_load.clicked.connect(self._load_custom_event_file)
-        action_bar.addWidget(btn_load)
 
         action_bar.addStretch()
 
         btn_pdf = QPushButton("📄 Export Audit Report (PDF/CSV)")
-        btn_pdf.setStyleSheet("background-color: #D69E2E; color: #1A202C; padding: 10px 18px; font-size: 11pt;")
+        btn_pdf.setStyleSheet("background-color: #D69E2E; color: #1A202C; font-weight: bold; padding: 7px 14px; font-size: 10pt; border-radius: 4px;")
         btn_pdf.clicked.connect(self._export_reports)
         action_bar.addWidget(btn_pdf)
 
@@ -1018,6 +966,8 @@ class OperatorCockpitApp(QMainWindow):
 
     def _refresh_telemetry_metrics(self):
         """Reads local inspection telemetry logs and updates FPY and defect Pareto metrics."""
+        if not hasattr(self, "lbl_fpy_stat"):
+            return
         log_file = REPO_ROOT / "data" / "telemetry_logs" / "inspection_history.jsonl"
         if not log_file.exists():
             self.lbl_fpy_stat.setText("FPY: N/A")
