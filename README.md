@@ -210,3 +210,38 @@ python3 module_b_guidance/app_ui.py --headless
 ```
 
 *(In the Cockpit, press **Spacebar** or click **"🚀 Inspect Current Board"** to run the live inspection cycle, evaluate the 5-stage gate & BGA checklist, generate Llama 3.2 1B dual advisories, and log telemetry).*
+
+---
+
+## 7. Model Credits, Dataset Citations & Acknowledgments
+
+This project is submitted to the **Bharat AI-SoC Challenge (PS5)** organized by **Arm, MeitY Chips to Startup (C2S), and IIT Delhi**. We gratefully acknowledge and credit the following open foundation models, open-source projects, and research datasets that power our closed-loop quality copilot:
+
+### 7.1. Edge Language Model & Runtime
+- **Meta Llama 3.2 1B-Instruct:**  
+  Developed and released by **Meta AI Research**. Used under the [Meta Llama 3.2 Community License Agreement](https://www.llama.com/llama3_2/license/).  
+  *Citation:* Dubey et al., *"The Llama 3 Herd of Models"*, arXiv:2407.21783, 2024.
+- **Quantized GGUF Distribution:**  
+  Provided by **bartowski** on the Hugging Face Hub ([`bartowski/Llama-3.2-1B-Instruct-GGUF`](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF)).
+- **Inference Runtimes:**  
+  - [`llama.cpp`](https://github.com/ggerganov/llama.cpp) by Georgi Gerganov & [`llama-cpp-python`](https://github.com/abetlen/llama-cpp-python) by Andrei Betlen.
+  - [Meta ExecuTorch](https://github.com/pytorch/executorch) with [Arm KleidiAI](https://gitlab.arm.com/kleidi/kleidiai) kernel acceleration for target Arm Cortex-A53 deployment.
+
+### 7.2. Computer Vision Framework
+- **Ultralytics YOLOv8-OBB:**  
+  Developed by **Ultralytics LLC** (Glenn Jocher, Ayush Chaurasia, Jing Qiu). Used for oriented bounding box detection under AGPL-3.0.  
+  *URL:* [https://github.com/ultralytics/ultralytics](https://github.com/ultralytics/ultralytics)
+
+### 7.3. Training Datasets & Benchmarks
+- **PCB Solder & Assembly Defect Dataset:**  
+  Curated by **Parsa Victor** on Hugging Face ([`ParsaVictor/pcb-solder-defect-detection`](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection)). Used for SMT solder bridge, starved paste, and assembly defect training.
+- **SolDef_AI PCB Defect Dataset:**  
+  Curated by **Maurizio Calabrese** et al., University of Cassino and Southern Lazio ([Kaggle SolDef-AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection)), licensed under GPL-3.0. Used for joint-level rotated macro defect polygons.
+- **SMD Component Placement Defect 2:**  
+  Curated by **Muhammad Huda Ferdinansyah** on [Roboflow Universe](https://universe.roboflow.com/muhammad-huda-ferdinansyah/smd-component-placement-defect-2), licensed under CC BY 4.0. Used for tombstone, orientation/polarity, and component misalignment classes.
+
+### 7.4. CAD & Hardware Ecosystem
+- **PyGerber Engine:**  
+  RS-274X Gerber parser and vector renderer developed by **Mateusz Gołębiewski** ([`pygerber`](https://github.com/PyGerber/pygerber)).
+- **Hardware Platform:**  
+  Target hardware sponsored by **AMD Xilinx** (ZCU104 Evaluation Kit featuring Zynq UltraScale+ XCZU7EV MPSoC). Optical camera integration validated with **e-con Systems** (See3CAM_CU30 USB 3.0 Optical Macro Camera).
