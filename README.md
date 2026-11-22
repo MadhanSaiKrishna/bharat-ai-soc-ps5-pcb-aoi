@@ -89,7 +89,7 @@ bharat-ai-soc-ps5-pcb-aoi/
 ├── module_a_vision/                 # Member 1: YOLOv8-OBB training & export (see module_a_vision/README.md)
 │   ├── README.md                    # Datasets, class taxonomy, model specs, results, repro steps
 │   ├── train_obb.py                 # Ultralytics YOLOv8-OBB fine-tune wrapper -> weights/<name>.pt
-│   ├── download_weights.py          # Fetches trained weights from GitHub release (vision-v1)
+│   ├── download_weights.py          # Fetches trained weights from GitHub release (vision-v2)
 │   ├── datasets/
 │   │   ├── convert_soldef.py        # SolDef_AI LabelMe polygons -> YOLO-OBB
 │   │   └── build_smt_merged.py      # HF solder dataset + SolDef -> 10-class OBB dataset
@@ -127,13 +127,13 @@ bharat-ai-soc-ps5-pcb-aoi/
 > The Tier 0 workstation/laptop baseline is **100% operational and physically verified** (Intel Core i9 + WSL2 + e-con See3CAM_CU30 USB 3.0 optical macro camera). For complete documentation of all Tier 0 accommodations (local storage buffers, non-blocking 15 FPS streaming bridge, customer RS-274X Gerber `.zip` ingestion, local GGUF Llama runtime) and their corresponding target mappings on the AMD Xilinx ZCU104 MPSoC, see the [Tier 0 Baseline & Edge Migration Guide](docs/TIER0_BASELINE_MIGRATION_GUIDE.md).
 
 > [!NOTE]
-> **Vision model status (Member 1, `vision-v2`, 2026-11-22, pending release):**
+> **Vision model status (Member 1, `vision-v2`, 2026-11-22):**
 > A **YOLOv8s-OBB 12-class SMT solder, assembly & placement model** (`smt_merged_v2_v8s.pt`) fine-tuned from v1 weights: HF held-out test **0.893 mAP@0.5** (val 0.878), precision 0.836, recall 0.889, **13.5 ms/img** on RTX 4050 FP32.
 > - **12 classes:** INSUFFICIENT_SOLDER, EXCESS_SOLDER, SOLDER_BRIDGE, SOLDER_VOID, SOLDER_SPIKE (→ `SMT_SPI`); MISSING_COMPONENT, SHIFTED_COMPONENT, BURN, PHYSICAL_DAMAGE, OXIDATION, TOMBSTONE, ORIENTATION_ERROR (→ `SMT_PLACEMENT`).
 > - **Trained on:** [HF pcb-solder-defect-detection](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection) (5.2k images) + [SolDef_AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection) joint-level subset + [Roboflow SMD Component Placement Defect 2 v5](https://universe.roboflow.com/muhammad-huda-ferdinansyah/smd-component-placement-defect-2) (CC BY 4.0, 2,750 originals).
 > - **Not yet covered:** wire bonds, SPI paste and validation on See3CAM frames (these come from the analytical stub/synthetic generator); ORIENTATION_ERROR is weak (0.69 AP@0.5).
 > - **Known regression:** fewer solder detections on close-up/macro shots (SolDef recall 0.70 → 0.66), caused by unlabelled solder defects in the Roboflow images; a risk for the See3CAM rig.
-> - Weights published as [`vision-v2`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v2) (pending); v1 remains at [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1). Full details: [`module_a_vision/README.md`](module_a_vision/README.md).
+> - Weights published as [`vision-v2`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v2); v1 remains at [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1). Full details: [`module_a_vision/README.md`](module_a_vision/README.md).
 
 ---
 
@@ -177,7 +177,7 @@ curl -L -o edge_llm_storage/weights/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
 ### 3b. Vision Model Weights (Optional vs. Fallback)
 Without weights, `VisionInferenceEngine` uses a Tier-0 analytical stub that returns fixed placeholder defects (it does not analyse the image). To run the real trained YOLOv8-OBB model:
 ```bash
-python -m module_a_vision.download_weights    # -> module_a_vision/weights/smt_merged_v8s.pt (23 MB)
+python -m module_a_vision.download_weights    # -> module_a_vision/weights/smt_merged_v2_v8s.pt (23 MB, vision-v2)
 ```
 The engine, Cockpit UI and `benchmark_tier0.py` pick the weights up automatically. Tests always force the stub, so they pass either way.
 

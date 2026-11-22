@@ -4,7 +4,7 @@ YOLOv8-OBB defect detection for the PS5 AOI pipeline. This document records
 what was built, the data decisions behind it, model specs, results and how to
 reproduce them.
 
-**Status (2026-11-22):** `vision-v2` (pending release). 12-class SMT solder, assembly & placement model
+**Status (2026-11-22):** `vision-v2` released. 12-class SMT solder, assembly & placement model
 fine-tuned from v1 weights; HF held-out test **0.893 mAP@0.5** (target ≥ 0.88).
 Tombstone and orientation-error classes are now covered. Close-up solder suppression regression — see §7.
 `vision-v1` remains available as release [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1).
@@ -15,8 +15,8 @@ Tombstone and orientation-error classes are now covered. Close-up solder suppres
 
 ```bash
 # 1. fetch trained weights (not in git; published as a GitHub release)
-python -m module_a_vision.download_weights --tag vision-v2 --asset smt_merged_v2_v8s.pt
-python -m module_a_vision.download_weights          # v1 (smt_merged_v8s.pt), still the downloader default
+python -m module_a_vision.download_weights          # vision-v2 -> module_a_vision/weights/smt_merged_v2_v8s.pt
+python -m module_a_vision.download_weights --tag vision-v1 --all   # previous models
 
 # 2. use from code
 python - <<'EOF'
@@ -124,7 +124,7 @@ Unknown classes default to `SMT_PLACEMENT` / `HIGH`.
 > flipped chip or reversed polarity (SMT_PLACEMENT, CRITICAL). OBB angle carries
 > skew, so SKEWED_PASSIVE is merged into SHIFTED_COMPONENT and not a separate class.
 
-## 5. Model specs — `smt_merged_v2_v8s.pt` (release `vision-v2`, pending)
+## 5. Model specs — `smt_merged_v2_v8s.pt` (release `vision-v2`)
 
 | Item | Value |
 |---|---|

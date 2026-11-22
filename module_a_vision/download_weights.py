@@ -8,7 +8,7 @@ module_a_vision/weights/, where VisionInferenceEngine looks by default.
 
 Usage:
     python -m module_a_vision.download_weights            # default release
-    python -m module_a_vision.download_weights --tag vision-v1 --all
+    python -m module_a_vision.download_weights --tag vision-v1 --all   # v1 + SolDef baseline
 """
 
 import argparse
@@ -17,9 +17,13 @@ import urllib.request
 from pathlib import Path
 
 REPO = "MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi"
-DEFAULT_TAG = "vision-v1"
-DEFAULT_ASSET = "smt_merged_v8s.pt"
-ALL_ASSETS = ["smt_merged_v8s.pt", "soldef_joint_v8s.pt"]
+DEFAULT_TAG = "vision-v2"
+DEFAULT_ASSET = "smt_merged_v2_v8s.pt"
+# --all downloads every asset of the given tag
+ALL_ASSETS = {
+    "vision-v1": ["smt_merged_v8s.pt", "soldef_joint_v8s.pt"],
+    "vision-v2": ["smt_merged_v2_v8s.pt"],
+}
 WEIGHTS_DIR = Path(__file__).resolve().parent / "weights"
 
 
@@ -45,7 +49,7 @@ def main():
     ap.add_argument("--all", action="store_true", help="Download every published model")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
-    assets = ALL_ASSETS if args.all else [args.asset]
+    assets = ALL_ASSETS.get(args.tag, [args.asset]) if args.all else [args.asset]
     try:
         for a in assets:
             download(args.tag, a, args.force)
