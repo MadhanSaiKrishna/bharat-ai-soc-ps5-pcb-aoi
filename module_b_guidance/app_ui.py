@@ -1144,6 +1144,12 @@ class OperatorCockpitApp(QMainWindow):
             self.current_event["defects"] = defects
             self.current_event["bga_checklist_passed"] = bga_passed
 
+        # Provide immediate visual feedback before running the generative copilot
+        self.dfm_view.setText("Generating DFM root-cause recommendations (Llama 3.2 1B)...")
+        self.asm_view.setText("Synthesizing machine calibration actions (Llama 3.2 1B)...")
+        self.status_bar.showMessage(f"Vision detected {len(defects)} defect(s) in {t_vision:.1f}ms. Synthesizing dual copilot guidance...")
+        QApplication.processEvents()
+
         # 6. Run Dual Closed-Loop Copilot Advisories
         self._run_advisory_inference()
 
@@ -1312,7 +1318,8 @@ class OperatorCockpitApp(QMainWindow):
                 self.camera_image = Image.open(img_path).convert("RGBA")
                 if self.cad_image:
                     self.canvas.set_frames(self.camera_image, self.cad_image)
-                self.status_bar.showMessage(f"Loaded optical frame from: {Path(img_path).name}")
+                self.status_bar.showMessage(f"Loaded optical frame from: {Path(img_path).name}. Running inspection cycle...")
+                self._run_cycle()
             else:
                 self.source_combo.setCurrentIndex(0)
 
