@@ -34,8 +34,10 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS_DIR = Path(__file__).resolve().parent / "weights"
-# Default production model; fetch with `python -m module_a_vision.download_weights`
-DEFAULT_WEIGHTS = WEIGHTS_DIR / "smt_merged_v8s.pt"
+# Default production model: vision-v2 if present, else vision-v1.
+# Fetch with `python -m module_a_vision.download_weights [--tag vision-v2 --asset smt_merged_v2_v8s.pt]`
+DEFAULT_WEIGHTS = next((WEIGHTS_DIR / f for f in ("smt_merged_v2_v8s.pt", "smt_merged_v8s.pt")
+                        if (WEIGHTS_DIR / f).exists()), WEIGHTS_DIR / "smt_merged_v8s.pt")
 
 # Non-defect classes some models emit; never reported as defects
 NORMAL_CLASSES = {"GOOD_JOINT", "WIRE_NORMAL"}
@@ -88,7 +90,7 @@ CLASS_SEVERITY = {
 class VisionInferenceEngine:
     """YOLOv8-OBB Oriented Bounding Box defect detection and inference engine.
 
-    By default loads module_a_vision/weights/smt_merged_v8s.pt if present.
+    By default loads weights/smt_merged_v2_v8s.pt (vision-v2), else smt_merged_v8s.pt (vision-v1).
     Pass model_weights=None to force the Tier-0 analytical fallback.
     """
 

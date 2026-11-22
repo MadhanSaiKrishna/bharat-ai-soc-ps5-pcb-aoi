@@ -127,12 +127,13 @@ bharat-ai-soc-ps5-pcb-aoi/
 > The Tier 0 workstation/laptop baseline is **100% operational and physically verified** (Intel Core i9 + WSL2 + e-con See3CAM_CU30 USB 3.0 optical macro camera). For complete documentation of all Tier 0 accommodations (local storage buffers, non-blocking 15 FPS streaming bridge, customer RS-274X Gerber `.zip` ingestion, local GGUF Llama runtime) and their corresponding target mappings on the AMD Xilinx ZCU104 MPSoC, see the [Tier 0 Baseline & Edge Migration Guide](docs/TIER0_BASELINE_MIGRATION_GUIDE.md).
 
 > [!NOTE]
-> **Vision model status (Member 1, `vision-v1`, 2026-11-22):**
-> A trained **YOLOv8s-OBB SMT solder & assembly model** (`smt_merged_v8s.pt`) meets the Tier 0 accuracy target on a held-out test set: **0.882 mAP@0.5** (val 0.895), precision 0.81, recall 0.88, **13.6 ms/img** on an RTX 4050 laptop GPU (FP32).
-> - **10 classes:** INSUFFICIENT_SOLDER, EXCESS_SOLDER, SOLDER_BRIDGE, SOLDER_VOID, SOLDER_SPIKE (→ `SMT_SPI`); MISSING_COMPONENT, SHIFTED_COMPONENT, BURN, PHYSICAL_DAMAGE, OXIDATION (→ `SMT_PLACEMENT`).
-> - **Trained on public real-photo data:** [HF pcb-solder-defect-detection](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection) (5.2k images) + [SolDef_AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection) joint-level subset.
-> - **Not yet covered:** wire bonds, SPI paste, tombstone/skew, and validation on See3CAM frames. Until then those come from the analytical stub/synthetic generator.
-> - Weights are published as the GitHub release [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1), not committed to git. Full details: [`module_a_vision/README.md`](module_a_vision/README.md).
+> **Vision model status (Member 1, `vision-v2`, 2026-11-22, pending release):**
+> A **YOLOv8s-OBB 12-class SMT solder, assembly & placement model** (`smt_merged_v2_v8s.pt`) fine-tuned from v1 weights: HF held-out test **0.893 mAP@0.5** (val 0.878), precision 0.836, recall 0.889, **13.5 ms/img** on RTX 4050 FP32.
+> - **12 classes:** INSUFFICIENT_SOLDER, EXCESS_SOLDER, SOLDER_BRIDGE, SOLDER_VOID, SOLDER_SPIKE (→ `SMT_SPI`); MISSING_COMPONENT, SHIFTED_COMPONENT, BURN, PHYSICAL_DAMAGE, OXIDATION, TOMBSTONE, ORIENTATION_ERROR (→ `SMT_PLACEMENT`).
+> - **Trained on:** [HF pcb-solder-defect-detection](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection) (5.2k images) + [SolDef_AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection) joint-level subset + [Roboflow SMD Component Placement Defect 2 v5](https://universe.roboflow.com/muhammad-huda-ferdinansyah/smd-component-placement-defect-2) (CC BY 4.0, 2,750 originals).
+> - **Not yet covered:** wire bonds, SPI paste and validation on See3CAM frames (these come from the analytical stub/synthetic generator); ORIENTATION_ERROR is weak (0.69 AP@0.5).
+> - **Known regression:** fewer solder detections on close-up/macro shots (SolDef recall 0.70 → 0.66), caused by unlabelled solder defects in the Roboflow images; a risk for the See3CAM rig.
+> - Weights published as [`vision-v2`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v2) (pending); v1 remains at [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1). Full details: [`module_a_vision/README.md`](module_a_vision/README.md).
 
 ---
 
