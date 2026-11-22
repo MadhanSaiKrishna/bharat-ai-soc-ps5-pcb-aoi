@@ -48,6 +48,7 @@ data/raw_defect_dumps/
 *.raw
 *.tar.gz
 *.zip
+!data/sample_gerbers/*.zip
 
 # IDE & OS files
 .vscode/
