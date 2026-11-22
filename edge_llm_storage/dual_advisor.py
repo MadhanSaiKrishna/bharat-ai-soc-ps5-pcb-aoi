@@ -227,6 +227,8 @@ class DualAdvisorEngine:
                 return f"DFM NOTE: Tombstoning at {cref} indicates unequal pad wetting. Make both land patterns identical in size and equalize copper/thermal relief on each pad."
             elif "ORIENTATION_ERROR" in dtype:
                 return f"DFM NOTE: Orientation/polarity error at {cref}. Add clear pin-1/cathode silkscreen marking visible after placement and verify CAD footprint rotation."
+            elif "MISSING" in dtype:
+                return f"DFM NOTE: Missing part at {cref}. Review footprint solder mask clearance and check if adjacent tall components shadow the pick-and-place nozzle path."
 
         return "DFM STATUS: No systematic layout-induced defect trends detected in rolling historical buffer."
 
@@ -252,6 +254,8 @@ class DualAdvisorEngine:
                 return f"CALIBRATION ACTION: Orientation error at {cref}. Verify feeder tape orientation and part rotation/polarity in the placement program; quarantine the reel if parts are flipped."
             elif "SHIFTED_COMPONENT" in dtype:
                 return f"CALIBRATION ACTION: Component shift at {cref}. Re-teach pick-and-place vision offsets for this part and check placement pressure and board support."
+            elif "MISSING" in dtype:
+                return f"CALIBRATION ACTION: Missing component at {cref}. Inspect feeder tape pitch indexing, clean nozzle vacuum orifice, and verify parts sensor threshold."
 
         return "CALIBRATION STATUS: Assembly parameters within normal statistical process control limits."
 

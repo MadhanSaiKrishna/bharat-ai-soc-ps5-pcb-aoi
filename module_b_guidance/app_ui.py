@@ -916,7 +916,7 @@ class OperatorCockpitApp(QMainWindow):
         placement_defects = [
             d for d in defects
             if d.get("category") == "SMT_PLACEMENT"
-            or any(kw in d.get("type", "") for kw in ["PLACEMENT", "SKEW", "TOMBSTONE", "COMPONENT_MISSING", "OFFSET"])
+            or any(kw in d.get("type", "") for kw in ["PLACEMENT", "SKEW", "TOMBSTONE", "MISSING", "OFFSET", "ORIENTATION", "SHIFTED"])
         ]
         if placement_defects:
             defect_types = ", ".join(set(d.get("type", "DEFECT") for d in placement_defects))
