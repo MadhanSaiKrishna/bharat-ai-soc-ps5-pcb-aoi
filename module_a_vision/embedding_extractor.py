@@ -102,6 +102,10 @@ class LightweightEmbeddingExtractor:
         return results[:top_k]
 
 
+# Alias for backward compatibility across subsystems
+MobileNetV3FeatureExtractor = LightweightEmbeddingExtractor
+
+
 if __name__ == "__main__":
     extractor = LightweightEmbeddingExtractor(embedding_dim=128)
     sample_vec = extractor.extract_embedding(None)

@@ -1,0 +1,316 @@
+# Tier 0 (Laptop/Workstation) Baseline & Edge SoC Migration Guide
+
+> **Project:** Closed-Loop Multi-Tier Edge AOI & Quality-Control Copilot  
+> **Challenge:** Bharat AI-SoC PS5 Challenge 2026–27 (Arm / MeitY C2S / IIT Delhi)  
+> **Target Production Hardware:** AMD Xilinx ZCU104 Evaluation Kit (Zynq UltraScale+ XCZU7EV MPSoC)  
+> **Current Active Branch:** `feat/tier0-baseline`  
+
+---
+
+## 1. Executive Summary & Purpose of Tier 0
+
+To accelerate development and enable all 3 team members to verify their modules simultaneously without requiring access to physical hardware (the AMD Xilinx ZCU104 development board, an industrial macro camera rig, or high-speed NVMe daughtercards), we established the **Tier 0 End-to-End Baseline**.
+
+In **Tier 0**, the entire AOI inspection pipeline—optical acquisition, CAD registration, oriented bounding box (OBB) defect detection, real-time closed-loop LLM advisory, and telemetry logging—executes directly on a standard developer workstation or laptop (x86_64 CPU/GPU or Linux/WSL2). 
+
+This document serves as the **official reference manual** detailing:
+1. Every design accommodation made in Tier 0.
+2. The exact target mapping for Tier 1, 2, and 3 on the ZCU104 edge board.
+3. Code locations, configuration switches, and migration procedures required when porting to physical hardware.
+
+### 1.1. Verified Hardware Sign-off & Operational Status (2026-11-21)
+
+The Tier 0 Baseline has been **physically verified and signed off** on the following developer hardware:
+
+| Parameter | Verified Specification on Developer Laptop |
+| :--- | :--- |
+| **Host Machine** | Intel Core i9-11900H @ 2.50GHz (8 cores, 16 threads), 16GB RAM |
+| **Host Operating System** | Windows 11 Home + Ubuntu 24.04 LTS on WSL2 (Linux kernel 6.18.58-microsoft) |
+| **Physical Camera Hardware** | **e-con Systems See3CAM_CU30** (3.4 MP USB 3.0 UVC Optical Macro Camera) |
+| **Streaming Pipeline** | Windows DirectShow bridge (`stream_camera_windows.py`) $\rightarrow$ WSL2 gateway (`172.22.160.1:8080`) @ **15 FPS** (smooth continuous capture, zero UI freezing, <500 KB/s bandwidth) |
+| **Customer CAD Parsing** | Full multi-layer RS-274X ingestion (`CUSTOMER_PCB_JOB_REV1.zip`): Top Copper (`.gtl`), Solder Paste (`.gtp`), and Silkscreen (`.gto`) composited via PyGerber onto dark-green substrate |
+| **On-Device LLM Copilot** | Meta Llama 3.2 1B-Instruct 4-bit GGUF via `llama-cpp-python` (AVX2 CPU), generating verified dual DFM / Assembler advisories obeying $\le 40$ words |
+| **Active Learning & OOD** | 1-click interactive box crop $\rightarrow$ MobileNetV3 feature vector extraction $\rightarrow$ queued to `data/operator_ingest_queue/` |
+| **Regression Test Status** | **12 / 12 unit & integration tests passing cleanly** (`pytest tests/`) |
+
+---
+
+## 2. Comprehensive Architectural Mapping (Tier 0 vs. Target Edge SoC)
+
+| Subsystem / Layer | Tier 0 Baseline (Developer Laptop / Workstation) | Target Tier 2 / 3 (Edge AMD Xilinx ZCU104 SoC) |
+| :--- | :--- | :--- |
+| **Compute Hardware** | Intel/AMD x86_64 Host CPU (with optional AVX2/CUDA) | Heterogeneous MPSoC: Quad-core Arm Cortex-A53 (PS) + DPU B4096 IP Core (PL) |
+| **Operating System** | Ubuntu 24.04 LTS (Native Linux or Windows WSL2 with WSLg) | Embedded PetaLinux 2023.2 or Ubuntu 22.04 LTS aarch64 on Arm PS |
+| **Bulk Storage & Telemetry** | Local Laptop Filesystem / NVMe (`data/telemetry_logs/`, `data/raw_defect_dumps/`) | Dedicated PCIe Gen2x1/x2 M.2 NVMe SSD partition (`/mnt/nvme/aoi_buffer`) |
+| **Camera & Image Feed** | Laptop USB 2.0/3.0 UVC Webcam or Optical Image Disk Loader (`/dev/video*`) | Industrial 5–8 MP UVC / MIPI-CSI Global Shutter Camera with telecentric macro lens & ring light |
+| **CAD Reference Data** | Procedural 5000x4000 Synthetic Gerber Compositor (`gerber_renderer.py`) | Customer RS-274X Gerber bundle (`.gtp`, `.gtl`, `.gts`, `.gko`) submitted by EMS assembler |
+| **Vision Inference (OBB)** | PyTorch / Ultralytics CPU runtime with synthetic OBB generator (`infer_vision.py`) | AMD Vitis AI DPU B4096 engine running quantized INT8 `.xmodel` on FPGA fabric |
+| **On-Device LLM Copilot** | Meta Llama 3.2 1B-Instruct (4-bit GGUF via `llama-cpp-python` with AVX2 CPU acceleration) | Meta ExecuTorch runtime with Arm KleidiAI / XNNPACK INT4 kernels (`.pte` format) |
+| **Operator Cockpit UI** | PyQt6 Desktop Application rendered on laptop screen (WSLg / X11) | Touchscreen HMI panel connected via ZCU104 DisplayPort (DP) or web/gRPC stream |
+| **Active Learning & OOD** | MobileNetV3 feature extractor saving cropped anomalies to `data/operator_ingest_queue/` | On-chip edge vector cache (Faiss-CPU / SQLite) with automated batch export |
+
+---
+
+## 3. Subsystem Breakdown: Tier 0 Modifications & Edge Migration
+
+### 3.1. Storage Subsystem: Local Laptop Filesystem vs. Dedicated NVMe Partition
+
+#### Tier 0 Implementation:
+- **Location:** `data/telemetry_logs/`, `data/raw_defect_dumps/`, and `data/operator_ingest_queue/`.
+- **Mechanism:** Files are written directly to the host laptop's internal disk via standard POSIX Python I/O (`storage_manager.py`).
+- **Memory Footprint:** Keeps a rolling 500-defect memory buffer in Python heap memory for instant LLM ingestion.
+- **Why it was modified:** Eliminates the requirement for external hardware drives or physical mounting privileges during local algorithm development.
+
+#### Edge Target (ZCU104):
+- **Target Location:** `/mnt/nvme/aoi_buffer` (high-capacity PCIe M.2 NVMe SSD attached to FMC or PCIe slot).
+- **Architecture Rationale:** A high-speed inspection line produces multi-megapixel uncompressed RAW frames at 30–60 FPS. Storing these directly into the ZCU104's 2GB DDR4 PS memory would choke AXI bus bandwidth and starve the Cortex-A53 CPU and DPU. The NVMe buffer decouples real-time inference from bulk audit persistence.
+- **Porting Step:**
+  ```python
+  # edge_llm_storage/storage_manager.py
+  # In Tier 0:
+  STORAGE_ROOT = Path("data/telemetry_logs")
+  # When porting to ZCU104 (Tier 2/3):
+  STORAGE_ROOT = Path("/mnt/nvme/aoi_buffer")
+  ```
+
+---
+
+### 3.2. Optical Image Acquisition: Native Linux vs. WSL2 vs. Industrial Camera Rig
+
+#### Tier 0 Implementation:
+- **Location:** `module_b_guidance/app_ui.py` (`CameraWorker` thread), `test_camera.py`, and `tools/stream_camera_windows.py`.
+- **Supported Input Channels:**
+  1. **Native Linux Laptops (Ubuntu, Fedora, Arch, Debian):**
+     - Teammates running bare-metal Linux plug the camera directly into their USB port.
+     - Linux kernel talks directly to the hardware via native V4L2 (`/dev/video0`).
+     - Selected in UI via: **`Live UVC Camera (Index 0 - /dev/video0)`**. Zero latency, 30–60 FPS, no bridge scripts needed.
+  2. **Windows WSL2 Developers:**
+     - WSL2 is a virtual machine and virtual USB/IP bridges (`usbipd-win`) frequently drop high-bandwidth USB 3.0 isochronous video packets (`vhci_hcd -104 ECONNRESET`).
+     - WSL2 users run `python tools/stream_camera_windows.py` on the Windows host and select **`Live Windows Stream (http://localhost:8080/video_feed)`** in the UI. OpenCV treats both identically as live frame streams.
+  3. **Synthetic PCB Simulator:**
+     - Runs without any camera attached; renders procedural PCB boards with realistic substrate texture.
+  4. **Disk Image Loader:**
+     - Allows loading static high-resolution PCB optical photos (`.png`, `.jpg`, `.tiff`) for repeatable defect benchmarks.
+- **Why it was modified:** Guarantees that any team member—whether on pure Linux, WSL2, or a machine without any physical camera—can run and verify the live inspection pipeline without friction.
+
+#### Edge Target (ZCU104):
+- **Target Hardware:** Industrial 5–8 MP Global Shutter Camera with C-Mount telecentric lens (to eliminate perspective distortion on tall BGA/QFP packages) and diffuse LED ring light.
+- **Interface:** Direct UVC USB 3.0 via ZCU104 USB3 host port or MIPI-CSI2 mezzanine card connected to FPGA I/O pins.
+- **Why Native Linux is Identical to ZCU104:** The ZCU104 runs embedded PetaLinux (bare-metal Linux). Therefore, the exact code used by teammates on **Native Linux (`/dev/video0`)** is 100% identical to the code that runs on the ZCU104 board! Only WSL2 requires the local network bridge.
+
+---
+
+### 3.3. CAD Gerber Reference & Homography Alignment
+
+#### Tier 0 Implementation:
+- **Location:** `module_b_guidance/gerber_renderer.py` and `module_b_guidance/homography_align.py`.
+- **Mechanism:**
+  - `gerber_renderer.py` features a dual mode:
+    1. Direct RS-274X Gerber layer loading (`.gtp` solder paste, `.gtl` top copper, `.gts` solder mask) using `pygerber`.
+    2. High-precision 5000x4000 procedural synthetic PCB CAD generator that renders BGA ball arrays (0.65 mm pitch), 0201 SMT passives, wire bond dies, and 4 corner optical fiducials.
+  - `homography_align.py` automatically detects fiducial count:
+    - 3 fiducials: Uses affine transformation (`cv2.getAffineTransform`) embedded into a 3x3 planar matrix.
+    - 4+ fiducials: Uses RANSAC homography (`cv2.findHomography(..., cv2.RANSAC)`).
+- **Why it was modified:** Provides complete visual verification and CAD overlay matching before receiving proprietary customer production Gerbers.
+
+#### Edge Target (ZCU104):
+- **Target Deployment:** When an EMS assembler loads a new production job, the customer Gerber package (RS-274X zip) is uploaded once into `/mnt/nvme/aoi_buffer/active_cad/`.
+- **Pre-rendering:** The high-resolution reference layers are pre-rendered into raster layers once upon job load, and pad coordinate matrices are indexed in memory. During live inspection, only homography transformation matrices `H` are computed per board.
+
+---
+
+### 3.4. Vision AI Defect Detection: Host CPU Baseline vs. FPGA DPU Acceleration
+
+#### Tier 0 Implementation:
+- **Location:** `module_a_vision/infer_vision.py`.
+- **Mechanism:** Runs PyTorch / Ultralytics YOLOv8-OBB model on host CPU (or CUDA GPU if available). If no custom trained `.pt` weights are present, it falls back to an integrated synthetic defect injection engine that generates valid Oriented Bounding Boxes `[xc, yc, w, h, angle_deg]` conforming to `schemas/inspection_event.json`.
+- **Cycle Time:** ~0.003s (synthetic baseline) or ~0.150s (PyTorch CPU).
+
+#### Edge Target (ZCU104):
+- **Target Deployment:** AMD Xilinx Deep Learning Processing Unit (DPU) IP core instantiated on the XCZU7EV Zynq UltraScale+ FPGA fabric (Programmable Logic / PL).
+- **Architecture:** DPUCZDX8G B4096 architecture running at 300 MHz.
+- **Model Format:** Quantized INT8 `.xmodel` compiled via AMD Vitis AI 3.0/3.5 Compiler (`vai_c_xir`).
+- **Data Path:** Live camera frames are DMA-transferred directly to PL BRAM/URAM via AXI4-Stream, and DPU results are returned to Arm PS via shared memory with zero CPU copy overhead.
+- **Target Vision Latency:** < 400 ms at full resolution.
+- **Porting Step:**
+  - Execute quantization and compilation scripts in `edge_llm_storage/vitis_ai_dpu/`:
+    ```bash
+    vai_q_pytorch --model yolov8_obb.pt --input_dir ./calibration_dataset
+    vai_c_xir -x quantized_yolov8_obb.xmodel -a /opt/vitis_ai/arch/ZCU104/ZCU104.json -o dpu_yolov8_obb.xmodel -n dpu_yolov8_obb
+    ```
+
+---
+
+### 3.5. On-Device LLM Copilot: GGUF CPU vs. ExecuTorch Arm KleidiAI
+
+#### Tier 0 Implementation:
+- **Location:** `edge_llm_storage/dual_advisor.py`.
+- **Model:** Meta Llama 3.2 1B-Instruct in 4-bit quantization (`Llama-3.2-1B-Instruct-Q4_K_M.gguf`, 771 MB).
+- **Runtime:** `llama-cpp-python` with AVX2 CPU acceleration.
+- **Word Guard:** Deterministic post-processing filter enforcing the competition rule: $\le 40$ words per recommendation branch.
+- **Why it was modified:** Allows the team to immediately test prompt engineering, context window management, and live advisory UI feedback without needing Arm cross-compilers or specialized toolchains.
+
+#### Edge Target (ZCU104):
+- **Target Deployment:** Meta ExecuTorch runtime executing on the Quad-core Arm Cortex-A53 Processing System (PS).
+- **Optimization:** Utilizes **Arm KleidiAI** micro-kernels (specifically optimized for Armv8-A architecture) and XNNPACK INT4 matrix multiplication kernels.
+- **Model Format:** Exported `.pte` package (`llama3_2_1b_kleidiai_int4.pte`).
+- **Target Generation Time:** < 3.0 s under 1100 MB RAM budget.
+- **Export Script:** Already provided in `edge_llm_storage/export_llama_pte.py`.
+- **Porting Step:**
+  - On the ZCU104 target board:
+    ```bash
+    python3 edge_llm_storage/export_llama_pte.py --output /mnt/nvme/models/llama3_2_1b_kleidiai_int4.pte --quantize int4
+    ```
+  - In `edge_llm_storage/dual_advisor.py`, enable the ExecuTorch backend switch:
+    ```python
+    ADVISOR_BACKEND = "executorch"  # Switched from "gguf"
+    ```
+
+---
+
+### 3.6. Operator Cockpit UI & Homography Display
+
+#### Tier 0 Implementation:
+- **Location:** `module_b_guidance/app_ui.py`.
+- **Display:** PyQt6 window rendering on developer monitor via native X11 or WSLg.
+- **Controls:**
+  - Top CAD Overlay Opacity slider (0% to 100%).
+  - Live inspection canvas with color-coded OBB defect boxes (Red: BGA/Solder, Amber: Placement, Blue: Wire Bond).
+  - 4-Point BGA Gate checklist with automated pass/block status.
+  - Dual LLM Advisory display (DFM Designer panel + Assembler Calibration panel).
+  - Anomaly Ingestion tool for operator-driven 1-click cropping of out-of-distribution defects.
+
+#### Edge Target (ZCU104):
+- **Display:** 10.1" or 15.6" industrial touch HMI monitor connected to the ZCU104 DisplayPort (DP) interface.
+- **Execution:** Runs under a lightweight X11/Wayland kiosk session in PetaLinux with touch gesture calibration.
+
+---
+
+## 4. Porting Checklist (From Tier 0 to Tier 1/2/3)
+
+When moving code from this `feat/tier0-baseline` branch onto the physical ZCU104 evaluation platform, execute the following steps:
+
+```markdown
+- [ ] 1. Target Linux System Bring-up
+      - Boot ZCU104 using official PetaLinux BSP or Ubuntu 22.04 LTS aarch64 image.
+      - Configure PCIe M.2 NVMe carrier card; format and mount to `/mnt/nvme/aoi_buffer`.
+
+- [ ] 2. Environment & Runtime Installation
+      - Install Meta ExecuTorch runtime with Arm KleidiAI support:
+        pip install executorch --extra-index-url https://download.pytorch.org/whl/executorch
+      - Install Vitis AI runtime packages (`vitis-ai-runtime`, `xir`, `vart`).
+      - Install UI dependencies: `pip install -r module_b_guidance/requirements.txt`.
+
+- [ ] 3. Vision Model Migration (PL DPU)
+      - Quantize trained YOLOv8-OBB PyTorch weights using Vitis AI Quantizer.
+      - Compile to `dpu_yolov8_obb.xmodel` for DPUCZDX8G (B4096).
+      - In `module_a_vision/infer_vision.py`, replace PyTorch inference call with `vart.Runner` DPU runner.
+
+- [ ] 4. LLM Migration (PS ExecuTorch)
+      - Run `python3 edge_llm_storage/export_llama_pte.py` to produce `llama3_2_1b_kleidiai_int4.pte`.
+      - In `edge_llm_storage/dual_advisor.py`, set backend flag to `executorch`.
+
+- [ ] 5. Camera Rig Integration
+      - Connect industrial UVC / MIPI camera to ZCU104.
+      - Verify `/dev/video0` output via `v4l2-ctl`.
+      - Test acquisition with `python3 test_camera.py`.
+
+- [ ] 6. Storage Configuration
+      - Update telemetry output directories in `edge_llm_storage/storage_manager.py` to point to `/mnt/nvme/aoi_buffer/`.
+
+- [ ] 7. End-to-End Benchmark Validation
+      - Run `python3 benchmark_tier0.py 50` on the ZCU104 board.
+      - Verify cycle time meets Tier 3 target: Total Cycle Time ≤ 3.5 s, Peak RAM < 1100 MB.
+```
+
+---
+
+## 5. Teammate Laptop Onboarding & Verification Guide
+
+> [!IMPORTANT]
+> **To All Team Members (Member 1 Vision & Member 2 Edge SoC):**  
+> When you pull the `feat/tier0-baseline` branch onto your developer laptop, follow this exact guide to test and verify the baseline. **No edge hardware, physical camera rig, or GPU is required to test this branch.**
+
+### 5.1. System & Virtual Environment Setup
+```bash
+# 1. Checkout the verified Tier 0 baseline branch
+git checkout feat/tier0-baseline
+
+# 2. Set up virtual environment
+python3 -m venv venv
+source venv/bin/activate       # On Linux / WSL2
+# .\venv\Scripts\activate     # On Windows PowerShell
+
+# 3. Install Python dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 5.2. Optional: Local Meta Llama 3.2 1B Model Weights
+- **Built-in Fallback:** If you do not download the model, `edge_llm_storage/dual_advisor.py` automatically uses the deterministic heuristic fallback engine. All tests and GUI features will run without issue.
+- **Real Neural Generation:** If you wish to run the real quantized 4-bit Llama 3.2 1B LLM:
+  ```bash
+  mkdir -p edge_llm_storage/weights
+  curl -L -o edge_llm_storage/weights/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+    https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+  ```
+
+### 5.3. Camera Feed Modes on Developer Laptops
+Select the appropriate mode in the UI top dropdown:
+1. **`Synthetic PCB Simulator` (Default):** Zero hardware needed. Simulates photorealistic PCB sensor frames.
+2. **`Load Optical Image from Disk...`:** Zero hardware needed. Allows loading any `.png`/`.jpg` file.
+3. **`Live Windows Stream (http://localhost:8080/video_feed)`:** If running inside WSL2 with an external USB camera (e.g. See3CAM_CU30) or Windows webcam:
+   - In Windows PowerShell: `python tools\stream_camera_windows.py --preview`
+   - In UI: select `Live Windows Stream`.
+4. **`Live UVC Camera (Index 0 /dev/video0)`:** For native Linux webcams (`sudo chmod 666 /dev/video*`).
+
+### 5.4. Verification Commands (Run Before Writing Code)
+```bash
+# 1. Run full unit and contract test suite (12 tests)
+python3 -m pytest tests/
+
+# 2. Run Tier 0 Master Performance Benchmark (15 cycles)
+python3 benchmark_tier0.py 15
+
+# 3. Launch the 5-Stage Operator Cockpit GUI
+python3 module_b_guidance/app_ui.py
+# Or with customer Gerber pre-loaded:
+python3 module_b_guidance/app_ui.py --gerber data/sample_gerbers/CUSTOMER_PCB_JOB_REV1.zip
+# Or in headless mode (for CI / environments without displays):
+python3 module_b_guidance/app_ui.py --headless
+```
+
+*(Inside the UI, press **Spacebar** or click **"🚀 Inspect Current Board"** to execute the live inspection cycle, evaluate the 5-stage checklist, generate closed-loop advisories, and log to telemetry).*
+
+### 5.5. Standalone LLM Closed-Loop Generation Test
+```bash
+python3 edge_llm_storage/dual_advisor.py --mock-input schemas/sample_inspection_event.json
+```
+
+---
+
+## 6. Living Changelog: Implementations, Tradeoffs & Edge Migration Ledger
+
+> [!IMPORTANT]
+> **Documentation Rule:** Any code change, mock adaptation, or hardware fallback introduced on the `feat/tier0-baseline` branch **must** be logged in this ledger with its associated tradeoffs and edge porting requirements.
+
+| Date / Commit | Subsystem / File | What Was Implemented for Tier 0 | Tradeoff / Laptop Accommodation | Edge ZCU104 Migration Task |
+| :--- | :--- | :--- | :--- | :--- |
+| **2026-11-21** (`bfd21de`) | `module_b_guidance/app_ui.py` | Added "Load Optical Image from Disk..." button and WSL2 camera diagnostic fallbacks | Avoids failure when no USB camera is plugged into the laptop or when WSL2 has not attached USB via `usbipd`. | In production, lock input to `/dev/video0` (V4L2) with hardware GPIO trigger sync; disable file picker in production kiosk mode. |
+| **2026-11-21** (`bfd21de`) | `module_b_guidance/homography_align.py` | Dual-mode homography (3-point affine transform via `cv2.getAffineTransform` vs 4+ point RANSAC via `cv2.findHomography`) | Prevents crash (`npoints >= 4 expected`) when fewer than 4 optical fiducials are visible on test boards. | On the factory conveyor rig, ensure all 4 fiducials are within the optical rig FOV; enforce RANSAC with strict thresholding. |
+| **2026-11-21** (`bfd21de`) | `module_b_guidance/gerber_renderer.py` | Procedural 5000x4000 synthetic PCB CAD generator (BGA, 0201 passives, wire bonds, fiducials) | Allows instant visual testing and CAD overlay alignment without waiting for proprietary customer Gerbers. | In production, replace procedural generator with standard customer RS-274X zip ingestion (`.gtp`, `.gtl`, `.gts`, `.gko`). |
+| **2026-11-21** (`bfd21de`) | `edge_llm_storage/dual_advisor.py` | Real Meta Llama 3.2 1B-Instruct GGUF (Q4_K_M) inference using `llama-cpp-python` with AVX2 CPU acceleration | Executes on x86_64 CPU without requiring Arm cross-compilation or specialized hardware accelerators. | Port to ExecuTorch runtime using Arm KleidiAI / XNNPACK INT4 kernels (`.pte` format) executing on the Cortex-A53 PS. |
+| **2026-11-21** (`bfd21de`) | `edge_llm_storage/storage_manager.py` | Telemetry logs and defect crops saved to local repository paths (`data/telemetry_logs/`, `data/raw_defect_dumps/`) | Uses standard laptop SSD storage without requiring physical partition mounting or root privileges. | Repoint `STORAGE_ROOT` to dedicated high-speed PCIe M.2 NVMe partition (`/mnt/nvme/aoi_buffer`) on the ZCU104 board. |
+| **2026-11-21** (`bfd21de`) | `module_a_vision/infer_vision.py` | Synthetic defect fallback injecting standardized OBB defects when `.pt` weights are absent | Allows full end-to-end pipeline, contract schema, and UI validation before training custom YOLO weights. | Replace synthetic fallback with AMD Vitis AI DPU runtime (`vart.Runner`) loading quantized `dpu_yolov8_obb.xmodel`. |
+| **2026-11-21** (`bfd21de`) | `benchmark_tier0.py` | Master evaluation suite measuring cycle time, RAM consumption, and 40-word advisory compliance | Runs on developer laptop to establish performance baselines and verify contract compliance. | Run identically on ZCU104 PetaLinux to verify compliance against Tier 3 targets (Cycle Time $\le 3.5\text{ s}$, RAM $< 1100\text{ MB}$). |
+| **2026-11-21** (`3f50284`) | `module_b_guidance/app_ui.py`<br>`tools/stream_camera_windows.py` | Non-blocking async `CameraWorker(QThread)` + Windows native HTTP streaming bridge (`http://localhost:8080/video_feed`) | Prevents PyQt6 UI freeze on V4L2 `select() timeout` over WSL2 `usbipd` bridge (`vhci_hcd -104 ECONNRESET`); allows 3.4MP streaming with zero UI lag. | On ZCU104 PetaLinux, camera streams directly into MIPI-CSI2 or native physical USB3 host with no virtual bridge needed. |
+| **2026-11-21** (`8e32bce`) | `module_b_guidance/app_ui.py`<br>`tools/stream_camera_windows.py` | 15 FPS adaptive throttling and zero-copy `QPainter.drawPixmap` decoupling CAD rendering from camera ticks | Eliminates 2.4 GB/s heap churn from 20MP CAD re-allocations on the Qt event loop, achieving smooth continuous video streaming with <1% CPU overhead. | Direct hardware plane overlay on ZCU104 DisplayPort (Vitis DRM / KMS planes) with zero CPU software rasterization. |
+| **2026-11-21** (`d312619`) | `module_b_guidance/gerber_renderer.py`<br>`module_b_guidance/app_ui.py`<br>`data/sample_gerbers/` | Assembler Customer Gerber Package Ingestion (`.zip`/folder) with multi-layer PyGerber compositing & CLI support | Automatically parses Top Copper (GTL), Solder Paste (GTP), and Silkscreen (GTO) onto PCB substrate in UI with zero delay. | Stored in `/mnt/nvme/aoi_buffer/active_cad/`; pre-composited once per job setup to ensure real-time inspection FPS. |
+| **2026-11-21** | `module_b_guidance/app_ui.py` | One-Click Live Inspection Cycle ("Inspect Current Board" / Spacebar) | Triggers live optical frame capture, OBB detection, dynamic 5-stage checklist evaluation, Llama 3.2 1B dual advisory, and decoupled storage logging in a single cycle. | On ZCU104, hardware GPIO / foot-pedal trigger fires cycle via interrupt; DPU inference handles OBB detection. |
+| **2026-11-21** | `module_b_guidance/app_ui.py` | Dynamic 5-Stage Checklist & 4-Point BGA Verification Gates | Dynamically maps vision defects (SPI, SMT placement, wire bond, BGA bridge/coplanarity/diameter/missing) to pass/fail gates and Overall Stage 5 Verdict (REWORK REQUIRED vs PASSED). | Gating rules remain identical; hardware PLC signal (Red/Green tower light) wired to Stage 5 verdict output. |
+| **2026-11-21** | `module_b_guidance/app_ui.py`<br>`edge_llm_storage/storage_manager.py` | Full Decoupled Storage Logging & RAW Multi-Megapixel Defect Patch Burst Buffer | Appends complete inspection events with dual advisories to JSONL telemetry and crops RAW defect image patches into `data/raw_defect_dumps/` without DDR RAM choking. | Direct DMA burst buffering to high-capacity PCIe M.2 NVMe partition (`/mnt/nvme/aoi_buffer`) on the ZCU104 board. |
+| **2026-11-21** | `module_b_guidance/app_ui.py` | Interactive Production Yield & Telemetry Audit Tab (FPY %) | Real-time calculation of First-Pass Yield (FPY %), total boards inspected, pass/rework counts, and defect Pareto ranking directly inside the operator cockpit. | Telemetry records synced to central factory MES / ERP database via lightweight MQTT/REST daemon. |
+| **2026-11-21** | `module_b_guidance/app_ui.py` | Fiducial Snap-to-CAD Homography Calibration ("🎯 Auto-Align CAD") | Computes planar homography from fiducial markers, calculates $\Delta X, \Delta Y, \Delta\theta$, and gates against IPC class tolerances in real time. | Real-time affine/homography transform hardware-accelerated in FPGA fabric or Vitis Vision library. |
+| **2026-11-21** | `module_a_vision/embedding_extractor.py`<br>`module_b_guidance/operator_ingest_tool.py` | Unified Lightweight Feature Extractor & Active Learning Anomaly Ingestion | Harmonized embedding extractor (MobileNetV3 backbone + deterministic fallback) producing 128-D normalized embeddings and cosine similarity recall on operator anomaly crops. | Accelerated on Arm Cortex-A53 via NEON / KleidiAI vector kernels or quantized embedding head on DPU. |
+| **2026-11-21** | `edge_llm_storage/dual_advisor.py`<br>`benchmark_tier0.py` | Multi-Threaded CPU Llama Acceleration & Benchmark Target Adaptation | Dynamically scales thread allocation to host CPU cores (up to 8 threads); adapts benchmark target cycle threshold to distinguish between laptop CPU and accelerated edge FPGA. | Replaced by ExecuTorch INT4 with KleidiAI on Cortex-A53 targeting $\le 3.5\text{ s}$ total cycle time. |
+

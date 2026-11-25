@@ -60,9 +60,31 @@ class DualAdvisorEngine:
         self.prompts_path = prompts_path or DEFAULT_PROMPTS_PATH
         self.prompts = self._load_prompts()
         self.executorch_loaded = False
+        self.llm_loaded = False
+        self.llm = None
+        self.gguf_model_path = None
 
+        self.runner = None
+        self.tokenizer_path = None
+
+        weights_dir = Path(__file__).resolve().parent / "weights"
         if self.pte_model_path and os.path.exists(self.pte_model_path):
             self._init_executorch()
+        else:
+            # Prefer real ExecuTorch .pte model (> 10 MB) + tokenizer if present
+            pte_files = [p for p in weights_dir.glob("*.pte") if p.stat().st_size > 10 * 1024 * 1024] if weights_dir.exists() else []
+            tok_file = next((weights_dir / t for t in ("tokenizer.model", "tokenizer.json") if (weights_dir / t).exists()), None)
+            if pte_files and tok_file is not None:
+                self.pte_model_path = str(pte_files[0])
+                self.tokenizer_path = str(tok_file)
+                self._init_executorch()
+
+            # Fallback to local GGUF model if ExecuTorch runner did not initialize
+            if not self.executorch_loaded and weights_dir.exists():
+                gguf_files = list(weights_dir.glob("*.gguf"))
+                if gguf_files:
+                    self.gguf_model_path = str(gguf_files[0])
+                    self._init_llama_cpp()
 
     def _load_prompts(self) -> Dict[str, Any]:
         if self.prompts_path.exists():
@@ -72,13 +94,54 @@ class DualAdvisorEngine:
 
     def _init_executorch(self):
         try:
-            # Placeholder for ExecuTorch python runtime or runner binding
-            # import executorch
+            import executorch.kernels.quantized  # noqa: F401 - register quantized_decomposed ops
+            from executorch.extension.llm.runner import TextLLMRunner
+            weights_dir = Path(__file__).resolve().parent / "weights"
+            tok = self.tokenizer_path or str(weights_dir / "tokenizer.model")
+            if not os.path.exists(tok):
+                raise FileNotFoundError(f"Tokenizer not found at {tok}")
+            print(f"[DualAdvisor] Initializing ExecuTorch Llama 3.2 1B from {self.pte_model_path}")
+            self.runner = TextLLMRunner(str(self.pte_model_path), tok)
             self.executorch_loaded = True
-            print(f"[DualAdvisor] Loaded ExecuTorch model from: {self.pte_model_path}")
+            print("[DualAdvisor] ExecuTorch TextLLMRunner neural engine online.")
         except Exception as e:
-            print(f"[DualAdvisor] ExecuTorch runtime not available, using high-speed edge heuristic fallback: {e}")
+            print(f"[DualAdvisor] ExecuTorch runtime init failed: {e}")
             self.executorch_loaded = False
+            self.runner = None
+
+    def _init_llama_cpp(self):
+        try:
+            from llama_cpp import Llama
+            print(f"[DualAdvisor] Initializing on-device Llama 3.2 1B from {self.gguf_model_path}")
+            import os
+            num_threads = min(8, os.cpu_count() or 4)
+            self.llm = Llama(
+                model_path=self.gguf_model_path,
+                n_ctx=512,
+                n_threads=num_threads,
+                verbose=False,
+            )
+            self.llm_loaded = True
+            print("[DualAdvisor] Llama 3.2 1B neural inference engine online.")
+        except Exception as e:
+            print(f"[DualAdvisor] llama_cpp init error: {e}. Using deterministic fallback.")
+            self.llm_loaded = False
+
+    def _run_llm_infer(self, prompt: str, system_prompt: str) -> str:
+        if self.llm is not None:
+            try:
+                res = self.llm.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=55,
+                    temperature=0.2,
+                )
+                return res["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                print(f"[DualAdvisor] Generation error: {e}")
+        return ""
 
     def format_prompts(self, event: Dict[str, Any]) -> Tuple[str, str]:
         """Formats the input prompt for both branches."""
@@ -122,23 +185,61 @@ class DualAdvisorEngine:
         """Generates DFM and Assembler recommendations within the strict <40 words rule."""
         dfm_prompt, asm_prompt = self.format_prompts(event)
 
-        if self.executorch_loaded:
+        if self.executorch_loaded and self.runner is not None:
             # Native on-device ExecuTorch execution
-            dfm_response = self._run_executorch_infer(dfm_prompt, branch="dfm")
-            asm_response = self._run_executorch_infer(asm_prompt, branch="assembler")
+            dfm_cfg = self.prompts.get("branch_dfm", {})
+            asm_cfg = self.prompts.get("branch_assembler", {})
+            dfm_response = self._run_executorch_infer(dfm_prompt, system_prompt=dfm_cfg.get("system_prompt", ""))
+            asm_response = self._run_executorch_infer(asm_prompt, system_prompt=asm_cfg.get("system_prompt", ""))
+        elif self.llm_loaded:
+            dfm_cfg = self.prompts.get("branch_dfm", {})
+            asm_cfg = self.prompts.get("branch_assembler", {})
+            dfm_raw = self._run_llm_infer(dfm_prompt, dfm_cfg.get("system_prompt", ""))
+            asm_raw = self._run_llm_infer(asm_prompt, asm_cfg.get("system_prompt", ""))
+            dfm_response = dfm_raw if dfm_raw else self._heuristic_dfm(event)
+            asm_response = asm_raw if asm_raw else self._heuristic_assembler(event)
         else:
-            # Deterministic, expert-rule baseline generator (for Workstation Tier 0 testing)
-            dfm_response = self._heuristic_dfm(event)
-            asm_response = self._heuristic_assembler(event)
+            raise RuntimeError(
+                "[DualAdvisor] CRITICAL: Real neural LLM model (Llama-3.2 GGUF or ExecuTorch PTE) is not loaded! "
+                "Ensure Llama-3.2-1B-Instruct-Q4_K_M.gguf exists in edge_llm_storage/weights/ "
+                "and llama-cpp-python is installed. Backup heuristics are disabled."
+            )
 
         return {
-            "dfm_layout_advisory": dfm_response,
-            "assembler_calibration_advisory": asm_response,
+            "dfm_layout_advisory": self._enforce_word_limit(dfm_response, max_words=38),
+            "assembler_calibration_advisory": self._enforce_word_limit(asm_response, max_words=38),
         }
 
-    def _run_executorch_infer(self, prompt: str, branch: str) -> str:
-        # Calls ExecuTorch wrapper
-        return f"[ExecuTorch {branch.upper()}]: Advisory output based on prompt."
+    def _enforce_word_limit(self, text: str, max_words: int = 38) -> str:
+        """Enforces competition <40 words rule."""
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        truncated = " ".join(words[:max_words])
+        if not truncated.endswith("."):
+            truncated += "..."
+        return truncated
+
+    def _run_executorch_infer(self, prompt: str, system_prompt: str = "", branch: str = "dfm") -> str:
+        """Runs native ExecuTorch TextLLMRunner generation with Llama-3 chat formatting."""
+        if self.runner is not None:
+            try:
+                from executorch.extension.llm.runner import GenerationConfig
+                formatted = (
+                    "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
+                    f"{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
+                    f"{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+                )
+                tokens: list[str] = []
+                cfg = GenerationConfig(max_new_tokens=55, temperature=0.2, echo=False)
+                self.runner.reset()
+                self.runner.generate(formatted, cfg, token_callback=tokens.append)
+                text = "".join(tokens).replace("<|eot_id|>", "").strip()
+                if text:
+                    return text
+            except Exception as e:
+                print(f"[ExecuTorch] Runtime inference error: {e}")
+        raise RuntimeError(f"[ExecuTorch] Inference failed for branch '{branch}'.")
 
     def _heuristic_dfm(self, event: Dict[str, Any]) -> str:
         defects = event.get("defects", [])
@@ -156,6 +257,12 @@ class DualAdvisorEngine:
                 return f"DFM WARNING: Aperture ratio marginal at {cref}. Enlarge stencil aperture area ratio to >= 0.66 or add solder mask dam to prevent bridging on next PCB rev."
             elif "SKEWED" in dtype:
                 return f"DFM NOTE: Thermal imbalance detected at {cref}. Balance copper pour connections and equalize thermal relief traces across component pads."
+            elif "TOMBSTONE" in dtype:
+                return f"DFM NOTE: Tombstoning at {cref} indicates unequal pad wetting. Make both land patterns identical in size and equalize copper/thermal relief on each pad."
+            elif "ORIENTATION_ERROR" in dtype:
+                return f"DFM NOTE: Orientation/polarity error at {cref}. Add clear pin-1/cathode silkscreen marking visible after placement and verify CAD footprint rotation."
+            elif "MISSING" in dtype:
+                return f"DFM NOTE: Missing part at {cref}. Review footprint solder mask clearance and check if adjacent tall components shadow the pick-and-place nozzle path."
 
         return "DFM STATUS: No systematic layout-induced defect trends detected in rolling historical buffer."
 
@@ -175,6 +282,14 @@ class DualAdvisorEngine:
                 return f"CALIBRATION ACTION: Clean stencil underside with IPA wipes. Verify squeegee pressure and replenish Type 4 solder paste."
             elif "SKEWED_PASSIVE" in dtype:
                 return f"CALIBRATION ACTION: Check pick-and-place nozzle vacuum pressure on 0201 feeder and clean nozzle tip for {cref}."
+            elif "TOMBSTONE" in dtype:
+                return f"CALIBRATION ACTION: Tombstone at {cref}. Lengthen reflow soak to equalize pad temperatures and check paste volume is balanced on both pads."
+            elif "ORIENTATION_ERROR" in dtype:
+                return f"CALIBRATION ACTION: Orientation error at {cref}. Verify feeder tape orientation and part rotation/polarity in the placement program; quarantine the reel if parts are flipped."
+            elif "SHIFTED_COMPONENT" in dtype:
+                return f"CALIBRATION ACTION: Component shift at {cref}. Re-teach pick-and-place vision offsets for this part and check placement pressure and board support."
+            elif "MISSING" in dtype:
+                return f"CALIBRATION ACTION: Missing component at {cref}. Inspect feeder tape pitch indexing, clean nozzle vacuum orifice, and verify parts sensor threshold."
 
         return "CALIBRATION STATUS: Assembly parameters within normal statistical process control limits."
 
