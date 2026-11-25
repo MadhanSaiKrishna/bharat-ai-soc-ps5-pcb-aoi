@@ -1,5 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 
@@ -42,13 +43,14 @@ venv.bak/
 weights/
 runs/
 
-# Large test images & RAW defect dumps
-data/operator_ingest_queue/raw_dumps/
+# Large test images, runtime queues & RAW defect dumps
+data/operator_ingest_queue/
 data/raw_defect_dumps/
+data/sample_gerbers/
+data/synthetic_generator/
 *.raw
 *.tar.gz
 *.zip
-!data/sample_gerbers/*.zip
 
 # IDE & OS files
 .vscode/
@@ -63,3 +65,9 @@ Thumbs.db
 *.jsonl
 data/telemetry_logs/
 telemetry_output/
+audit_reports/
+
+# Local generated reports, dev benchmarks & demo recordings (kept out of git merges)
+benchmark_tier0.py
+docs/*.pdf
+*.mp4

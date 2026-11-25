@@ -64,12 +64,23 @@ class DualAdvisorEngine:
         self.llm = None
         self.gguf_model_path = None
 
+        self.runner = None
+        self.tokenizer_path = None
+
+        weights_dir = Path(__file__).resolve().parent / "weights"
         if self.pte_model_path and os.path.exists(self.pte_model_path):
             self._init_executorch()
         else:
-            # Check for local GGUF model in weights directory
-            weights_dir = Path(__file__).resolve().parent / "weights"
-            if weights_dir.exists():
+            # Prefer real ExecuTorch .pte model (> 10 MB) + tokenizer if present
+            pte_files = [p for p in weights_dir.glob("*.pte") if p.stat().st_size > 10 * 1024 * 1024] if weights_dir.exists() else []
+            tok_file = next((weights_dir / t for t in ("tokenizer.model", "tokenizer.json") if (weights_dir / t).exists()), None)
+            if pte_files and tok_file is not None:
+                self.pte_model_path = str(pte_files[0])
+                self.tokenizer_path = str(tok_file)
+                self._init_executorch()
+
+            # Fallback to local GGUF model if ExecuTorch runner did not initialize
+            if not self.executorch_loaded and weights_dir.exists():
                 gguf_files = list(weights_dir.glob("*.gguf"))
                 if gguf_files:
                     self.gguf_model_path = str(gguf_files[0])
@@ -83,13 +94,20 @@ class DualAdvisorEngine:
 
     def _init_executorch(self):
         try:
-            # Placeholder for ExecuTorch python runtime or runner binding
-            # import executorch
+            import executorch.kernels.quantized  # noqa: F401 - register quantized_decomposed ops
+            from executorch.extension.llm.runner import TextLLMRunner
+            weights_dir = Path(__file__).resolve().parent / "weights"
+            tok = self.tokenizer_path or str(weights_dir / "tokenizer.model")
+            if not os.path.exists(tok):
+                raise FileNotFoundError(f"Tokenizer not found at {tok}")
+            print(f"[DualAdvisor] Initializing ExecuTorch Llama 3.2 1B from {self.pte_model_path}")
+            self.runner = TextLLMRunner(str(self.pte_model_path), tok)
             self.executorch_loaded = True
-            print(f"[DualAdvisor] Loaded ExecuTorch model from: {self.pte_model_path}")
+            print("[DualAdvisor] ExecuTorch TextLLMRunner neural engine online.")
         except Exception as e:
-            print(f"[DualAdvisor] ExecuTorch runtime not available, using high-speed edge heuristic fallback: {e}")
+            print(f"[DualAdvisor] ExecuTorch runtime init failed: {e}")
             self.executorch_loaded = False
+            self.runner = None
 
     def _init_llama_cpp(self):
         try:
@@ -167,17 +185,19 @@ class DualAdvisorEngine:
         """Generates DFM and Assembler recommendations within the strict <40 words rule."""
         dfm_prompt, asm_prompt = self.format_prompts(event)
 
-        if self.llm_loaded:
+        if self.executorch_loaded and self.runner is not None:
+            # Native on-device ExecuTorch execution
+            dfm_cfg = self.prompts.get("branch_dfm", {})
+            asm_cfg = self.prompts.get("branch_assembler", {})
+            dfm_response = self._run_executorch_infer(dfm_prompt, system_prompt=dfm_cfg.get("system_prompt", ""))
+            asm_response = self._run_executorch_infer(asm_prompt, system_prompt=asm_cfg.get("system_prompt", ""))
+        elif self.llm_loaded:
             dfm_cfg = self.prompts.get("branch_dfm", {})
             asm_cfg = self.prompts.get("branch_assembler", {})
             dfm_raw = self._run_llm_infer(dfm_prompt, dfm_cfg.get("system_prompt", ""))
             asm_raw = self._run_llm_infer(asm_prompt, asm_cfg.get("system_prompt", ""))
             dfm_response = dfm_raw if dfm_raw else self._heuristic_dfm(event)
             asm_response = asm_raw if asm_raw else self._heuristic_assembler(event)
-        elif self.executorch_loaded:
-            # Native on-device ExecuTorch execution
-            dfm_response = self._run_executorch_infer(dfm_prompt, branch="dfm")
-            asm_response = self._run_executorch_infer(asm_prompt, branch="assembler")
         else:
             raise RuntimeError(
                 "[DualAdvisor] CRITICAL: Real neural LLM model (Llama-3.2 GGUF or ExecuTorch PTE) is not loaded! "
@@ -200,14 +220,26 @@ class DualAdvisorEngine:
             truncated += "..."
         return truncated
 
-    def _run_executorch_infer(self, prompt: str, branch: str) -> str:
-        # Calls ExecuTorch wrapper if runner is attached
-        if hasattr(self, "runner") and self.runner is not None:
+    def _run_executorch_infer(self, prompt: str, system_prompt: str = "", branch: str = "dfm") -> str:
+        """Runs native ExecuTorch TextLLMRunner generation with Llama-3 chat formatting."""
+        if self.runner is not None:
             try:
-                return self.runner.generate(prompt, max_tokens=60)
+                from executorch.extension.llm.runner import GenerationConfig
+                formatted = (
+                    "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
+                    f"{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
+                    f"{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+                )
+                tokens: list[str] = []
+                cfg = GenerationConfig(max_new_tokens=55, temperature=0.2, echo=False)
+                self.runner.reset()
+                self.runner.generate(formatted, cfg, token_callback=tokens.append)
+                text = "".join(tokens).replace("<|eot_id|>", "").strip()
+                if text:
+                    return text
             except Exception as e:
                 print(f"[ExecuTorch] Runtime inference error: {e}")
-        return f"EXECUTORCH ADVISORY: {branch.upper()} action executed based on rolling defect telemetry."
+        raise RuntimeError(f"[ExecuTorch] Inference failed for branch '{branch}'.")
 
     def _heuristic_dfm(self, event: Dict[str, Any]) -> str:
         defects = event.get("defects", [])

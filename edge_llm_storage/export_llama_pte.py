@@ -54,13 +54,28 @@ def export_llama_to_pte(
         print("\nCreating deployment manifest and simulation profile...")
         return _write_export_manifest(out_path, model_id_or_path, backend, quantization)
 
-    # ExecuTorch LLM export routine
+    # ExecuTorch LLM export routine via optimum-executorch
     try:
-        from executorch.extension.llm.export import export_to_edge
-        print("[2/4] Initializing Llama 3.2 model architecture...")
-        # Placeholder for torch.export flow with KleidiAI/XNNPACK partitioner
-        print("[3/4] Applying 4-bit weight-only KleidiAI quantization...")
-        print("[4/4] Serializing to .pte binary...")
+        import subprocess
+        out_subdir = out_dir / "executorch_llama3_2_1b"
+        out_subdir.mkdir(parents=True, exist_ok=True)
+        qlinear_flag = "8da4w" if quantization == "int4" else ("8da8w" if quantization == "int8" else None)
+        cmd = [
+            sys.executable, "-m", "optimum.exporters.executorch",
+            "--model", model_id_or_path,
+            "--task", "text-generation",
+            "--recipe", "xnnpack",
+            "--max_seq_len", "512",
+            "-o", str(out_subdir),
+        ]
+        if qlinear_flag:
+            cmd.extend(["--qlinear", qlinear_flag, "--qembedding", "8w"])
+        print(f"[2/4] Running ExecuTorch export: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+        pte_candidates = list(out_subdir.glob("*.pte"))
+        if pte_candidates:
+            print(f"[4/4] Exported genuine ExecuTorch .pte binary: {pte_candidates[0]}")
+            return pte_candidates[0]
         return out_path
     except Exception as e:
         print(f"[Export Engine] ExecuTorch export encountered: {e}")

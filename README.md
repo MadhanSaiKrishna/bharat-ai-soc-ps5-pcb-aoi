@@ -1,247 +1,112 @@
-# Closed-Loop Multi-Tier Edge AOI & Quality-Control Copilot
+# Bharat AI-SoC PS5 — Phase 1 Baseline & Competition Roadmap (`feat/tier0-baseline`)
 
-[![Challenge](https://img.shields.io/badge/Bharat%20AI--SoC-PS5%20Challenge%202026--27-blue.svg)](#)
-[![Target-SoC](https://img.shields.io/badge/Target-AMD%20Xilinx%20ZCU104-red.svg)](#)
-[![Architecture](https://img.shields.io/badge/Architecture-Heterogeneous%20Arm%20PS%20%2B%20DPU%20PL-green.svg)](#)
-[![License](https://img.shields.io/badge/License-Academic%20%2F%20Open-lightgrey.svg)](#)
-
-> **Research Lab:** IC~WiBES, Center for VLSI and Embedded System Technologies (CVEST), IIIT Hyderabad  
-> **Faculty Advisor:** Dr. Abhishek Srivastava  
-> **Target Hardware:** AMD Xilinx ZCU104 Evaluation Kit (Zynq UltraScale+ XCZU7EV MPSoC) *(with Raspberry Pi 5 fallback)*
+> **Branch Scope:** This `README.md` documents the **Phase 1 / Tier 0 working baseline** on `feat/tier0-baseline` and the **roadmap for Phases 2 and 3**. When merging into `main`, retain `main`'s root `README.md` if preferred.
 
 ---
 
-## 1. Executive Overview & Problem Differentiation
+## 1. What Is Implemented in This Phase 1 Baseline
 
-Mid-scale Indian Electronics Manufacturing Services (EMS), Advanced Packaging, and Original Design Manufacturer (ODM) shops assemble high-density Printed Circuit Boards (PCBs) and System-in-Package (SiP) modules featuring 0.65 mm pitch BGAs, 0201 discrete passives, fine-pitch QFPs, and sub-millimeter micro-electronic wire bonds. Standard industrial Automated Optical Inspection (AOI) units carry prohibitive capital expenditures (₹15–50+ Lakh) and operate as rigid, passive "pass/fail" filters without intelligent closed-loop diagnostic feedback.
+This branch delivers a **100% offline, end-to-end PC/Tier-0 prototype** of the Closed-Loop Edge PCB Automated Optical Inspection (AOI) & Quality-Control Copilot:
 
-Our architecture introduces **four fundamental differentiators**:
-1. **Multi-Scale Oriented Micro-Defect Detection (YOLOv8-OBB):** Predicts rotated bounding boxes `(xc, yc, w, h, θ)` to accurately inspect high-aspect-ratio wire bonds (wire sweep, sagging, lifted heels, neck cracks) and skewed fine-pitch components where overlapping horizontal boxes fail.
-2. **Dual Closed-Loop Root-Cause Advisory (ExecuTorch Llama 3.2 1B):** Evaluates a rolling 500-defect memory buffer to generate actionable root causes tailored separately for:
-   - **The CAD/Layout Designer (DFM):** Highlights layout traps, pad clearance bottlenecks, and thermal relief issues to fix future board spins.
-   - **The SMT/Wire Bonding Assembler:** Recommends physical machine adjustments (capillary ultrasonic power, bonding force, squeegee pressure, nozzle vacuum wear) to prevent scrap in the current production run.
-3. **Decoupled Edge Compute & Bulk Storage:** Real-time inference (YOLOv8-OBB on FPGA DPU / Arm CPU) and low-latency LLM advisory execute strictly at the edge with zero cloud dependency. A high-capacity local storage buffer isolates multi-megapixel RAW defect image bursts, feature embeddings, and telemetry logs, preventing DRAM bandwidth choking during real-time inspection.
-4. **Operator-in-the-Loop Anomaly Ingestion (Active Learning):** Out-of-distribution (OOD) defects identified on the shop floor can be immediately cropped and tagged by the AOI operator. A lightweight feature extractor indexes the anomaly into a local edge vector store for zero-downtime few-shot recognition, automatically queuing the sample for offline incremental retraining.
-
----
-
-## 2. System Architecture
-
-```mermaid
-flowchart TD
-    subgraph S1["1. Optical Acquisition & CAD Pre-Alignment"]
-        CAM["UVC Optical Rig (5-8MP)"] --> FRAME["Live Video Frame"]
-        GERBER["RS-274X Gerber Layers (GTP, GTL, GKO)"] --> CAD_RENDER["PyGerber Compositor"]
-        FRAME & CAD_RENDER --> HOMOGRAPHY["Planar Homography (cv2.findHomography)"]
-        HOMOGRAPHY --> DELTA["Delta Engine (dX, dY, dθ) vs Tolerances"]
-    end
-
-    subgraph S2["2. Multi-Stage Edge Vision Pipeline"]
-        DELTA --> STAGE_GATE{"5-Stage Inspection Workflow"}
-        STAGE_GATE -->|Check 1: SPI| YOLO_SPI["YOLOv8-OBB (Solder Paste)"]
-        STAGE_GATE -->|Check 2: SMT| YOLO_SMT["YOLOv8-OBB (Placement & Skew)"]
-        STAGE_GATE -->|Check 3: Wire Bond| YOLO_WIRE["YOLOv8-OBB (Rotated Wire Bonds)"]
-        STAGE_GATE -->|BGA Gate| BGA_CHECK["4-Point BGA Checklist Gate"]
-    end
-
-    subgraph S3["3. Operator Cockpit & Active Learning"]
-        YOLO_SPI & YOLO_SMT & YOLO_WIRE --> UI_OVERLAY["PyQt6 Live Overlay & Review"]
-        UI_OVERLAY -->|OOD Anomaly Crop| EMBED["MobileNetV3 Feature Extractor"]
-        EMBED --> VECTOR_STORE[("Edge Faiss / SQLite Index")]
-        VECTOR_STORE --> RETRAIN_QUEUE["Offline Retraining Queue"]
-    end
-
-    subgraph S4["4. On-Device Dual Advisory & Telemetry"]
-        UI_OVERLAY --> EVENT_JSON["Standardized inspection_event.json"]
-        EVENT_JSON --> HIST_BUFFER[("Rolling 500-Defect Buffer")]
-        HIST_BUFFER --> EXECUTORCH["ExecuTorch Llama 3.2 1B (int4 KleidiAI)"]
-        EXECUTORCH --> DFM_ADVICE["Branch 1: CAD DFM Recommendation (<40 words)"]
-        EXECUTORCH --> ASM_ADVICE["Branch 2: SMT / Wire Bonder Calibration (<40 words)"]
-        EVENT_JSON & DFM_ADVICE & ASM_ADVICE --> LOCAL_STORAGE[("Decoupled NVMe/SSD Storage Buffer")]
-    end
-```
+1. **Real-Time Oriented Defect Detection (`module_a_vision/`):**
+   - **Model:** 12-class **YOLOv8s-OBB** (`smt_merged_v2_v8s.pt`, 23 MB; **0.893 mAP@0.5** held-out HF test) + exported ExecuTorch XNNPACK `.pte` (`smt_merged_v2_v8s_xnnpack.pte`, 44 MB).
+   - **Classes:** `INSUFFICIENT_SOLDER`, `EXCESS_SOLDER`, `SOLDER_BRIDGE`, `SOLDER_VOID`, `SOLDER_SPIKE`, `MISSING_COMPONENT`, `SHIFTED_COMPONENT`, `BURN`, `PHYSICAL_DAMAGE`, `OXIDATION`, `TOMBSTONE`, `ORIENTATION_ERROR`.
+2. **On-Device Dual AI Copilot (`edge_llm_storage/`):**
+   - **Runtime:** **Meta ExecuTorch 1.6.0** (`TextLLMRunner`, XNNPACK `8da4w` INT4 quantized `model.pte`, 915 MB, ~1.3–1.76 GiB RSS, ~6–7 tok/s decode) running **Meta Llama 3.2 1B-Instruct** locally (with `llama-cpp-python` GGUF fallback).
+   - **Dual Advisories (<40 words each):**
+     - **Branch 1 (CAD / DFM):** Layout/pad-clearance root-cause advice for PCB designers.
+     - **Branch 2 (Assembler):** Machine/process calibration action for SMT operators.
+   - **Storage (`storage_manager.py`):** Logs schema-validated JSONL telemetry (`schemas/inspection_event.json`).
+3. **Minimal Responsive Operator Cockpit (`module_b_guidance/app_ui.py`):**
+   - Clean, non-blocking PyQt6 UI (`Load PCB Image`, `Load Gerber (.zip)`, `Start Live Camera`, `Inspect Frame (Space)`).
+   - Renders YOLOv8-OBB rotated bounding boxes immediately (<1 s) while Llama 3.2 1B runs asynchronously in `AdvisorWorker`.
+   - Clickable top `status_banner` for live progress and 1-click navigation to **AI Copilot Advisories**, plus **Export Audit Report (PDF / CSV)** (`report_generator.py`).
 
 ---
 
-## 3. Team Role Split & Ownership Matrix
+## 2. Quickstart & Verification
 
-| Role & Owner | Primary Domain | Owned Subsystems & Deliverables | Key Frameworks |
-| :--- | :--- | :--- | :--- |
-| **Member 1: Vision AI & Dataset Lead** | Vision Models, OBB Defect Synthesis & Ingestion | • Curate public SMT/wire bonding datasets<br>• Gerber-driven synthetic defect generator (`synth_defects.py`)<br>• Train YOLOv8-OBB models (SPI, Placement, Wire Bonding)<br>• Lightweight embedding extractor (`embedding_extractor.py`) | PyTorch, Ultralytics YOLOv8-OBB, OpenCV, Albumentations, PyGerber, ONNX |
-| **Member 2: Edge SoC, ExecuTorch & FPGA Lead** | Embedded Linux, LLM Advisory & HW-SW Co-Design | • Bring up Ubuntu/PetaLinux on ZCU104 PS<br>• Compile and quantize Llama 3.2 1B via ExecuTorch (`.pte`) with KleidiAI/XNNPACK<br>• Dual-feedback prompt engine (`dual_advisor.py`)<br>• High-speed storage manager (`storage_manager.py`)<br>• Vitis AI DPU compilation for ZCU104 PL | Meta ExecuTorch, AMD Vitis AI, PetaLinux/Ubuntu Arm64, ONNX Runtime, XNNPACK |
-| **Member 3: Gerber Homography, UI & Integration Lead** | CAD Alignment, Live Overlay, Operator UI & System Loop | • Ingest RS-274X Gerber layers (`gerber_renderer.py`)<br>• Real-time fiducial homography engine (`homography_align.py`)<br>• 5-Stage PyQt6 operator UI (`app_ui.py`) with CAD overlay slider<br>• 1-Click anomaly ingestion tool (`operator_ingest_tool.py`)<br>• End-to-end pipeline wiring and report generation | Python, PyGerber, OpenCV, PyQt6, SQLite / Faiss-cpu, ReportLab |
-
----
-
-## 4. Repository Layout
-
-```
-bharat-ai-soc-ps5-pcb-aoi/
-├── README.md                        # Architecture overview, benchmark table & quickstart
-├── requirements.txt                 # Dependencies (pygerber, opencv-python, ultralytics, executorch)
-├── configs/
-│   ├── tolerances.yaml              # Standard, Fine-pitch, BGA, and Wire Bond alignment thresholds
-│   └── prompts.yaml                 # DFM Designer and Assembler Calibration prompt templates
-├── data/
-│   ├── sample_gerbers/              # Reference Gerber files (GTP, GTL, GTO, GKO)
-│   ├── synthetic_generator/         # Member 1: synth_defects.py (wire bonds, SPI, placement)
-│   └── operator_ingest_queue/       # Local storage queue for operator-flagged anomalies
-├── module_a_vision/                 # Member 1: YOLOv8-OBB training & export (see module_a_vision/README.md)
-│   ├── README.md                    # Datasets, class taxonomy, model specs, results, repro steps
-│   ├── train_obb.py                 # Ultralytics YOLOv8-OBB fine-tune wrapper -> weights/<name>.pt
-│   ├── download_weights.py          # Fetches trained weights from GitHub release (vision-v2)
-│   ├── datasets/
-│   │   ├── convert_soldef.py        # SolDef_AI LabelMe polygons -> YOLO-OBB
-│   │   └── build_smt_merged.py      # HF solder dataset + SolDef -> 10-class OBB dataset
-│   ├── weights/                     # Local .pt files (git-ignored; via download_weights.py)
-│   ├── embedding_extractor.py       # MobileNetV3 feature vector generator for active learning
-│   └── infer_vision.py              # Auto-loads weights, emits defect entries for inspection_event.json
-├── module_b_guidance/               # Member 3: Gerber parser, homography & operator UI
-│   ├── gerber_renderer.py           # PyGerber RS-274X layer compositor & die/BGA pad extractor
-│   ├── homography_align.py          # Fiducial matching & real-time dX, dY, dTheta engine
-│   ├── operator_ingest_tool.py      # Bounding box crop & anomaly tagging dialog
-│   └── app_ui.py                    # 5-stage PyQt6 operator UI with live CAD overlay & checklist
-├── edge_llm_storage/                # Member 2: ExecuTorch Llama & storage buffering
-│   ├── export_llama_pte.py          # Exports Llama 3.2 1B to ExecuTorch .pte format
-│   ├── dual_advisor.py              # Evaluates history buffer & outputs DFM / Calibration advice
-│   ├── storage_manager.py           # NVMe/SSD buffer manager for RAW frames and audit logs
-│   └── vitis_ai_dpu/                # Quantization & DPU compilation scripts for ZCU104
-└── schemas/
-    ├── inspection_event.json        # Shared contract schema
-    └── sample_inspection_event.json # Standard verification payload
-```
-
----
-
-## 5. Master Evaluation & Benchmarking Target
-
-| Tier | Compute Placement | Precision | Vision Latency | LLM Gen Time | Total Cycle Time | Peak RAM | Target Accuracy |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Tier 0** | Workstation PC (x86_64) | FP32 | Baseline | Baseline | < 4.0 s | Baseline | ≥ 88% mAP@0.5 |
-| **Tier 1** | ZCU104 Cortex-A53 (PS only) | FP32 | < 3000 ms | < 10 s | ≤ 15.0 s | < 1800 MB | ≥ 85% mAP@0.5 |
-| **Tier 2** | ZCU104 Cortex-A53 (KleidiAI) | INT8 PTQ | < 1500 ms | < 6 s | ≤ 8.0 s | < 1200 MB | ≥ 85% mAP@0.5 |
-| **Tier 3** | Vision DPU (PL) + LLM (PS) | INT8 + INT4 | < 400 ms | < 3 s | ≤ 3.5 s | < 1100 MB | ≥ 85% mAP@0.5 |
-
-> [!NOTE]
-> **Tier 0 Implementation & Edge Migration Guide:**  
-> The Tier 0 workstation/laptop baseline is **100% operational and physically verified** (Intel Core i9 + WSL2 + e-con See3CAM_CU30 USB 3.0 optical macro camera). For complete documentation of all Tier 0 accommodations (local storage buffers, non-blocking 15 FPS streaming bridge, customer RS-274X Gerber `.zip` ingestion, local GGUF Llama runtime) and their corresponding target mappings on the AMD Xilinx ZCU104 MPSoC, see the [Tier 0 Baseline & Edge Migration Guide](docs/TIER0_BASELINE_MIGRATION_GUIDE.md).
-
-> [!NOTE]
-> **Vision model status (Member 1, `vision-v2`, 2026-11-22):**
-> A **YOLOv8s-OBB 12-class SMT solder, assembly & placement model** (`smt_merged_v2_v8s.pt`) fine-tuned from v1 weights: HF held-out test **0.893 mAP@0.5** (val 0.878), precision 0.836, recall 0.889, **13.5 ms/img** on RTX 4050 FP32.
-> - **12 classes:** INSUFFICIENT_SOLDER, EXCESS_SOLDER, SOLDER_BRIDGE, SOLDER_VOID, SOLDER_SPIKE (→ `SMT_SPI`); MISSING_COMPONENT, SHIFTED_COMPONENT, BURN, PHYSICAL_DAMAGE, OXIDATION, TOMBSTONE, ORIENTATION_ERROR (→ `SMT_PLACEMENT`).
-> - **Trained on:** [HF pcb-solder-defect-detection](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection) (5.2k images) + [SolDef_AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection) joint-level subset + [Roboflow SMD Component Placement Defect 2 v5](https://universe.roboflow.com/muhammad-huda-ferdinansyah/smd-component-placement-defect-2) (CC BY 4.0, 2,750 originals).
-> - **Not yet covered:** wire bonds, SPI paste and validation on See3CAM frames (these come from the analytical stub/synthetic generator); ORIENTATION_ERROR is weak (0.69 AP@0.5).
-> - **Known regression:** fewer solder detections on close-up/macro shots (SolDef recall 0.70 → 0.66), caused by unlabelled solder defects in the Roboflow images; a risk for the See3CAM rig.
-> - Weights published as [`vision-v2`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v2); v1 remains at [`vision-v1`](https://github.com/MadhanSaiKrishna/bharat-ai-soc-ps5-pcb-aoi/releases/tag/vision-v1). Full details: [`module_a_vision/README.md`](module_a_vision/README.md).
-
----
-
-## 6. Quickstart & Teammate Laptop Onboarding Guide
-
-> [!IMPORTANT]
-> **To All Teammates (Member 1 Vision & Member 2 Edge SoC):**  
-> Before testing this branch on your local laptop, review the prerequisites and step-by-step instructions below. The Tier 0 pipeline is designed to run **out-of-the-box on any laptop with zero physical hardware required** (using synthetic and simulated fallbacks).
-
-### 1. Prerequisites
-- **OS:** Linux (Ubuntu 22.04/24.04), Windows 10/11 with WSL2 (WSLg for GUI), or macOS.
-- **Python:** 3.10, 3.11, or 3.12 (virtual environment strongly recommended).
-- **Display:** For GUI, ensure X11/Wayland/WSLg is active, or use `--headless` mode for headless environments.
-
-### 2. Environment Setup
 ```bash
-# 1. Switch to the verified Tier 0 baseline branch
-git checkout feat/tier0-baseline
-
-# 2. Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate       # On Linux / WSL2
-# .\venv\Scripts\activate     # On Windows PowerShell
-
-# 3. Install core dependencies
-pip install --upgrade pip
+source venv/bin/activate
 pip install -r requirements.txt
-```
 
-### 3. On-Device LLM Weights Setup (Optional vs. Fallback)
-The repository includes an automatic, high-speed deterministic heuristic fallback in `edge_llm_storage/dual_advisor.py`. **You can run all tests and the cockpit UI immediately without downloading any model weights.**
-
-If you want to run live neural inference using the local Meta Llama 3.2 1B-Instruct model:
-```bash
-mkdir -p edge_llm_storage/weights
-# Download quantized GGUF (771 MB):
-curl -L -o edge_llm_storage/weights/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-  https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
-```
-
-### 3b. Vision Model Weights (Optional vs. Fallback)
-Without weights, `VisionInferenceEngine` uses a Tier-0 analytical stub that returns fixed placeholder defects (it does not analyse the image). To run the real trained YOLOv8-OBB model:
-```bash
-python -m module_a_vision.download_weights    # -> module_a_vision/weights/smt_merged_v2_v8s.pt (23 MB, vision-v2)
-```
-The engine, Cockpit UI and `benchmark_tier0.py` pick the weights up automatically. Tests always force the stub, so they pass either way.
-
-### 4. Optical Stream & Camera Modes (Choose for your laptop)
-In the Cockpit UI header dropdown, select the source that matches your laptop setup:
-- **`Synthetic PCB Simulator` (Default - Zero Hardware Needed):** Generates photorealistic high-res PCB frames with fiducials and components. Works on every laptop.
-- **`Load Optical Image from Disk...` (Zero Hardware Needed):** Allows loading any custom PCB image (`.png`, `.jpg`) directly.
-- **`Live UVC Camera (Index 0 /dev/video0)`:** For native Linux webcams/cameras. Ensure permissions: `sudo chmod 666 /dev/video*`.
-- **`Live Windows Stream (http://localhost:8080/video_feed)`:** If running in WSL2 with an external USB camera (e.g. See3CAM_CU30) or Windows webcam:
-  1. In Windows PowerShell:
-     ```powershell
-     python tools\stream_camera_windows.py --preview
-     ```
-  2. In Linux UI: select `Live Windows Stream`. (Achieves smooth 15 FPS streaming with zero WSL2 packet drops).
-
-### 5. Verification Commands (Run these 3 checks)
-```bash
-# A. Run full contract, vision, and UI test suite (12 tests)
+# 1. Verify all 12 contract, vision, and UI integration tests
 python3 -m pytest tests/
 
-# B. Run the Tier 0 performance benchmark (15 cycles)
-python3 benchmark_tier0.py 15
-
-# C. Launch the interactive Operator Cockpit UI
+# 2. Launch the Operator Cockpit UI
 python3 module_b_guidance/app_ui.py
-# Or with a pre-loaded customer Gerber package:
-python3 module_b_guidance/app_ui.py --gerber data/sample_gerbers/CUSTOMER_PCB_JOB_REV1.zip
-# Or in headless verification mode (for CI or systems without displays):
-python3 module_b_guidance/app_ui.py --headless
 ```
 
-*(In the Cockpit, press **Spacebar** or click **"🚀 Inspect Current Board"** to run the live inspection cycle, evaluate the 5-stage gate & BGA checklist, generate Llama 3.2 1B dual advisories, and log telemetry).*
+**Model Weights (GitHub Release `v1.0.0-phase1`):**
+- `model.pte` & `tokenizer.model` → `edge_llm_storage/weights/`
+- `smt_merged_v2_v8s.pt` & `smt_merged_v2_v8s_xnnpack.pte` → `module_a_vision/weights/`
 
 ---
 
-## 7. Model Credits, Dataset Citations & Acknowledgments
+## 3. Repository Structure & File Map
 
-This project is submitted to the **Bharat AI-SoC Challenge (PS5)** organized by **Arm, MeitY Chips to Startup (C2S), and IIT Delhi**. We gratefully acknowledge and credit the following open foundation models, open-source projects, and research datasets that power our closed-loop quality copilot:
+| Path | Role / What It Does |
+| :--- | :--- |
+| `README.md` | Branch documentation for Phase 1 baseline, file map, and Phase 2/3 roadmap |
+| `AGENTS.md` | Multi-developer collaboration protocol, folder ownership, and schema lock rules |
+| `requirements.txt` | Top-level Python dependencies |
+| `.github/workflows/ci.yml` | Automated CI workflow running `pytest` |
+| `configs/prompts.yaml` | Dual-branch (DFM & Assembler) prompt templates for Llama 3.2 1B |
+| `configs/tolerances.yaml` | Alignment & placement tolerance thresholds |
+| `schemas/inspection_event.json` | Single-source-of-truth JSON Schema contract across all 3 modules |
+| `schemas/sample_inspection_event.json` | Sample schema-compliant inspection payload for contract tests |
+| `data/practical_test_samples/` | Real populated PCB defect images (`01`–`05`) used for demo and UI tests |
+| `docs/TIER0_BASELINE_MIGRATION_GUIDE.md` | Tier-0 PC to ZCU104 / Arm SoC migration reference |
+| `edge_llm_storage/dual_advisor.py` | ExecuTorch 1.6.0 `TextLLMRunner` + GGUF fallback generating DFM & Assembler advisories |
+| `edge_llm_storage/export_llama_pte.py` | `optimum-executorch` XNNPACK `8da4w` INT4 export script for Llama 3.2 1B |
+| `edge_llm_storage/storage_manager.py` | Local JSONL telemetry & raw defect crop logger |
+| `module_a_vision/infer_vision.py` | `VisionInferenceEngine`: loads YOLOv8s-OBB and emits schema-compliant defects |
+| `module_a_vision/train_obb.py` | Ultralytics YOLOv8-OBB fine-tuning wrapper |
+| `module_a_vision/download_weights.py` | Fetches published YOLOv8-OBB weights from GitHub Releases |
+| `module_a_vision/embedding_extractor.py` | MobileNetV3 feature extractor for Phase 2 active learning |
+| `module_a_vision/datasets/` | `convert_soldef.py` & `build_smt_merged.py` dataset preparation scripts |
+| `module_a_vision/README.md` | Detailed vision training, dataset fusion, class taxonomy, and evaluation notes |
+| `module_a_vision/HANDOFF_MEMBER2.md` | Vision-to-LLM class/severity handoff specification |
+| `module_b_guidance/app_ui.py` | Minimal, responsive PyQt6 Operator Cockpit (`InspectionCanvas`, `CameraWorker`, `AdvisorWorker`) |
+| `module_b_guidance/gerber_renderer.py` | PyGerber RS-274X Gerber layer parser |
+| `module_b_guidance/homography_align.py` | Fiducial homography alignment engine (`ΔX`, `ΔY`, `Δθ`) *(Phase 2 UI)* |
+| `module_b_guidance/operator_ingest_tool.py` | Operator OOD anomaly crop & ingest tool *(Phase 2 UI)* |
+| `module_b_guidance/report_generator.py` | One-click PDF & CSV compliance audit report exporter |
+| `module_b_guidance/requirements.txt` | Module B / UI-specific dependencies |
+| `tests/` | `test_contract.py`, `test_module_b_guidance.py`, `test_vision_inference.py` (12 tests) |
+| `tools/stream_camera_windows.py` | Low-latency Windows-to-WSL2 HTTP camera bridge |
+| `tools/test_e2e_pipeline.py` | Headless CLI end-to-end pipeline verification script |
 
-### 7.1. Edge Language Model & Runtime
-- **Meta Llama 3.2 1B-Instruct:**  
-  Developed and released by **Meta AI Research**. Used under the [Meta Llama 3.2 Community License Agreement](https://www.llama.com/llama3_2/license/).  
-  *Citation:* Dubey et al., *"The Llama 3 Herd of Models"*, arXiv:2407.21783, 2024.
-- **Quantized GGUF Distribution:**  
-  Provided by **bartowski** on the Hugging Face Hub ([`bartowski/Llama-3.2-1B-Instruct-GGUF`](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF)).
-- **Inference Runtimes:**  
-  - [`llama.cpp`](https://github.com/ggerganov/llama.cpp) by Georgi Gerganov & [`llama-cpp-python`](https://github.com/abetlen/llama-cpp-python) by Andrei Betlen.
-  - [Meta ExecuTorch](https://github.com/pytorch/executorch) with [Arm KleidiAI](https://gitlab.arm.com/kleidi/kleidiai) kernel acceleration for target Arm Cortex-A53 deployment.
+---
 
-### 7.2. Computer Vision Framework
-- **Ultralytics YOLOv8-OBB:**  
-  Developed by **Ultralytics LLC** (Glenn Jocher, Ayush Chaurasia, Jing Qiu). Used for oriented bounding box detection under AGPL-3.0.  
-  *URL:* [https://github.com/ultralytics/ultralytics](https://github.com/ultralytics/ultralytics)
+## 4. Planned Features for Next Competition Phases
 
-### 7.3. Training Datasets & Benchmarks
-- **PCB Solder & Assembly Defect Dataset:**  
-  Curated by **Parsa Victor** on Hugging Face ([`ParsaVictor/pcb-solder-defect-detection`](https://huggingface.co/datasets/ParsaVictor/pcb-solder-defect-detection)). Used for SMT solder bridge, starved paste, and assembly defect training.
-- **SolDef_AI PCB Defect Dataset:**  
-  Curated by **Maurizio Calabrese** et al., University of Cassino and Southern Lazio ([Kaggle SolDef-AI](https://www.kaggle.com/datasets/mauriziocalabrese/soldef-ai-pcb-dataset-for-defect-detection)), licensed under GPL-3.0. Used for joint-level rotated macro defect polygons.
-- **SMD Component Placement Defect 2:**  
-  Curated by **Muhammad Huda Ferdinansyah** on [Roboflow Universe](https://universe.roboflow.com/muhammad-huda-ferdinansyah/smd-component-placement-defect-2), licensed under CC BY 4.0. Used for tombstone, orientation/polarity, and component misalignment classes.
+| Feature / Subsystem | Phase 1 Status | Phase 2 Plan | Phase 3 Plan |
+| :--- | :--- | :--- | :--- |
+| **YOLOv8s-OBB 12-Class Vision** | Implemented (`0.893 mAP@0.5`, `.pt` + `.pte`) | Add wire-bond & SPI paste classes + See3CAM macro fine-tuning (`vision-v3`) | Compile to INT8 `.xmodel` on ZCU104 Vitis AI DPU (`< 400 ms`) |
+| **ExecuTorch Llama 3.2 1B Copilot** | Implemented (`model.pte` 8da4w INT4 on x86_64) | Tune domain prompts & rolling 500-defect trend memory | Deploy on Arm Cortex-A53 with KleidiAI INT4 kernels (`< 3 s`) |
+| **Gerber CAD & Homography** | Backend parsed (`gerber_renderer.py`, `homography_align.py`); `Load Gerber (.zip)` in UI | Surface live CAD overlay + fiducial `ΔX/ΔY/Δθ` tolerance gating in UI | Hardware-calibrated optical rig alignment |
+| **5-Stage Gate & BGA Checklist** | Schema & tolerance configs ready | Integrate 5-stage pass/rework checklist into Cockpit | Automated conveyor pass/reject diverter |
+| **Active Learning OOD Crop** | Backend ready (`operator_ingest_tool.py`, `embedding_extractor.py`) | Enable 1-click anomaly crop & edge vector indexing in UI | Closed-loop offline incremental retraining |
 
-### 7.4. CAD & Hardware Ecosystem
-- **PyGerber Engine:**  
-  RS-274X Gerber parser and vector renderer developed by **Mateusz Gołębiewski** ([`pygerber`](https://github.com/PyGerber/pygerber)).
-- **Hardware Platform:**  
-  Target hardware sponsored by **AMD Xilinx** (ZCU104 Evaluation Kit featuring Zynq UltraScale+ XCZU7EV MPSoC). Optical camera integration validated with **e-con Systems** (See3CAM_CU30 USB 3.0 Optical Macro Camera).
+### Key Porting Details & Architectural Tradeoffs (Phase 2 & Phase 3)
+
+1. **Vision Precision vs. DPU Operator Support (`YOLOv8s-OBB`):**
+   - *Phase 1:* Runs FP32 `.pt` (`0.893 mAP@0.5`, ~228 ms warm CPU) and exported XNNPACK `.pte` (44 MB).
+   - *Phase 2/3 Tradeoff:* Lowering YOLOv8s-OBB to INT8 `.xmodel` on the ZCU104 Vitis AI DPU targets `< 400 ms` latency, but rotated-box (`OBB` angle) decoding and NMS are kept on the Arm PS CPU to avoid custom DPU op failures, and INT8 PTQ requires calibration on macro See3CAM frames to preserve `SOLDEF` / `ORIENTATION_ERROR` recall.
+2. **LLM Footprint vs. PS DRAM Budget (`Llama 3.2 1B`):**
+   - *Phase 1:* Quantized via `optimum-executorch` (`--dtype float32 --qlinear 8da4w --qembedding 8w --max_seq_len 512`) into a 915 MB `model.pte` (~1.33–1.76 GiB RSS, ~6–7 tok/s decode).
+   - *Phase 2/3 Tradeoff:* Capping `max_seq_len=512` and enforcing `< 40 words` per advisory keeps memory under the ZCU104 Cortex-A53 `< 1.8 GB` PS limit and avoids KV-cache bloat; running `AdvisorWorker` asynchronously prevents the 8–10 s LLM step from blocking frame acquisition.
+3. **Optical-to-CAD Homography vs. Uncalibrated Inputs:**
+   - *Phase 1:* `homography_align.py` and `operator_ingest_tool.py` are implemented and unit-tested in `module_b_guidance/`, while the Cockpit UI stays minimal for arbitrary optical photos.
+   - *Phase 2/3 Tradeoff:* Live CAD overlay + fiducial `ΔX/ΔY/Δθ` gating is deferred to Phase 2 when a fixed-mount optical rig (`See3CAM_CU30`) provides consistent scale and lighting, avoiding false alignment failures on varied single-board test photos.
+
+---
+
+## 5. Model, Dataset, Training & Hardware Credits
+
+- **Meta Llama 3.2 1B-Instruct** (`unsloth/Llama-3.2-1B-Instruct`, `bartowski/Llama-3.2-1B-Instruct-GGUF`) — Meta Llama 3.2 Community License; Dubey et al., arXiv:2407.21783 (2024).
+- **Meta ExecuTorch 1.6.0 & `optimum-executorch`** (XNNPACK `8da4w` quantization) + **Arm KleidiAI**.
+- **Ultralytics YOLOv8s-OBB** (AGPL-3.0).
+- **Datasets:** `ParsaVictor/pcb-solder-defect-detection` (Hugging Face, 5,209 images), `SolDef_AI` (Kaggle, GPL-3.0, 200 joint-level macro images), `SMD Component Placement Defect 2` (Roboflow Universe, CC BY 4.0, 2,750 originals). Details in [`module_a_vision/README.md`](module_a_vision/README.md).
+- **Libraries & Hardware:** PyGerber, PyQt6, OpenCV, Pillow, ReportLab, AMD Xilinx ZCU104, e-con Systems See3CAM_CU30.

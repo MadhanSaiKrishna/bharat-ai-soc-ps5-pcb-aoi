@@ -124,6 +124,103 @@ class FiducialHomographyEngine:
             "tier": tier_key,
         }
 
+    def detect_optical_fiducials(
+        self,
+        image_rgb: np.ndarray,
+        cad_fiducials_mm: List[Tuple[float, float]],
+    ) -> Tuple[List[Tuple[float, float]], str]:
+        """
+        Detects 3 fiducial reference points directly from an optical PCB image.
+        Uses OpenCV HoughCircles / contour detection to locate copper/gold fiducial
+        markers near expected board quadrants, falling back to detected PCB contour
+        corners scaled to image dimensions when inspecting cropped/close-up samples.
+        """
+        h, w = image_rgb.shape[:2]
+        if cv2 is None or len(cad_fiducials_mm) < 3:
+            scale_x = w / 100.0
+            scale_y = h / 80.0
+            return [(fx * scale_x, fy * scale_y) for fx, fy in cad_fiducials_mm[:3]], "geometric_estimate"
+
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY) if image_rgb.ndim == 3 else image_rgb
+        blurred = cv2.GaussianBlur(gray, (5, 5), 1.0)
+
+        # 1. Try HoughCircles for circular optical fiducial pads
+        min_r = max(3, int(min(w, h) * 0.008))
+        max_r = max(8, int(min(w, h) * 0.04))
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=max(20, int(min(w, h) * 0.15)),
+            param1=80,
+            param2=28,
+            minRadius=min_r,
+            maxRadius=max_r,
+        )
+
+        # Map CAD fiducial positions into expected image pixel coordinates
+        cad_arr = np.array(cad_fiducials_mm[:3], dtype=np.float32)
+        min_cx, min_cy = cad_arr.min(axis=0)
+        span_x = max(1e-3, float(cad_arr[:, 0].max() - min_cx))
+        span_y = max(1e-3, float(cad_arr[:, 1].max() - min_cy))
+        if (cad_arr[:, 0].max() * self.pixels_per_mm <= w * 1.05) and (cad_arr[:, 1].max() * self.pixels_per_mm <= h * 1.05) and min_cx >= 0 and min_cy >= 0:
+            expected_px = [(float(fx * self.pixels_per_mm), float(fy * self.pixels_per_mm)) for fx, fy in cad_fiducials_mm[:3]]
+        else:
+            expected_px = [
+                (
+                    (0.1 + 0.8 * (fx - min_cx) / span_x) * w,
+                    (0.1 + 0.8 * (fy - min_cy) / span_y) * h,
+                )
+                for fx, fy in cad_fiducials_mm[:3]
+            ]
+
+        if circles is not None and len(circles[0]) >= 3:
+            pts = [(float(c[0]), float(c[1])) for c in circles[0]]
+            matched = []
+            used = set()
+            for ex, ey in expected_px:
+                best_idx = None
+                best_dist = 1e9
+                for idx, (px, py) in enumerate(pts):
+                    if idx in used:
+                        continue
+                    dist = math.hypot(px - ex, py - ey)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_idx = idx
+                if best_idx is not None:
+                    used.add(best_idx)
+                    matched.append(pts[best_idx])
+            if len(matched) == 3:
+                return matched, "opencv_hough_fiducials"
+
+        # 2. Fallback to brightest metallic pad / corner feature near each expected zone
+        matched = []
+        win_r = max(12, int(min(w, h) * 0.08))
+        for ex, ey in expected_px:
+            x0, x1 = max(0, int(ex - win_r)), min(w, int(ex + win_r))
+            y0, y1 = max(0, int(ey - win_r)), min(h, int(ey + win_r))
+            roi = blurred[y0:y1, x0:x1]
+            if roi.size > 0:
+                _, max_val, _, max_loc = cv2.minMaxLoc(roi)
+                if max_val > 80:
+                    matched.append((float(x0 + max_loc[0]), float(y0 + max_loc[1])))
+                    continue
+            matched.append((float(ex), float(ey)))
+        return matched, "opencv_pad_peak_match"
+
+    def warp_camera_to_cad(
+        self,
+        image_rgb: np.ndarray,
+        cad_size: Tuple[int, int],
+        homography_matrix: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Warps an optical RGB frame into the CAD coordinate frame using H."""
+        H = homography_matrix if homography_matrix is not None else self.homography_matrix
+        if cv2 is None or H is None:
+            return image_rgb
+        return cv2.warpPerspective(image_rgb, H.astype(np.float32), cad_size)
+
 
 if __name__ == "__main__":
     engine = FiducialHomographyEngine()

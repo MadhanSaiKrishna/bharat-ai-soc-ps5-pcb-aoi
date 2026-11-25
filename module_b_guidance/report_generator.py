@@ -70,92 +70,78 @@ class AuditReportGenerator:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         out_path = filepath or (self.output_dir / f"audit_report_{board_id}_{timestamp}.pdf")
 
+        defects = event_data.get("defects", [])
+        verdict = "PASSED (ZERO DEFECTS)" if len(defects) == 0 else f"REWORK REQUIRED ({len(defects)} DEFECTS)"
+        vision_ms = event_data.get("metrics", {}).get("vision_latency_ms")
+        vision_str = f" | Vision: {vision_ms:.1f} ms" if vision_ms is not None else ""
+
         if not HAS_REPORTLAB:
-            # Fallback to plain text summary if reportlab is not yet installed
             txt_path = out_path.with_suffix(".txt")
             with open(txt_path, "w") as f:
-                f.write(f"=== BHARAT AI-SOC PS5 PCB AOI AUDIT REPORT ===\n")
-                f.write(f"Board ID: {board_id}\n")
-                f.write(f"Checkpoint: {event_data.get('checkpoint')}\n")
-                f.write(f"Alignment Status: {event_data.get('alignment', {}).get('status')}\n")
-                f.write(f"Defects Count: {len(event_data.get('defects', []))}\n\n")
-                f.write(f"[DFM Advisory]\n{dfm_advisory}\n\n")
-                f.write(f"[Assembler Calibration]\n{asm_advisory}\n")
+                f.write("=== BHARAT AI-SOC PS5 PCB AOI — INSPECTION REPORT ===\n")
+                f.write(f"Board / Image: {board_id}\n")
+                f.write(f"Verdict: {verdict}{vision_str}\n")
+                f.write(f"Defects Count: {len(defects)}\n\n")
+                f.write(f"[CAD / DFM Advisory]\n{dfm_advisory}\n\n")
+                f.write(f"[Assembler Action]\n{asm_advisory}\n")
             return txt_path
 
         doc = SimpleDocTemplate(str(out_path), pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
         styles = getSampleStyleSheet()
         elements = []
 
-        # Title
         title_style = ParagraphStyle(
             "TitleStyle",
             parent=styles["Heading1"],
-            fontSize=18,
+            fontSize=16,
             textColor=colors.HexColor("#1A365D"),
-            spaceAfter=12,
+            spaceAfter=8,
         )
-        elements.append(Paragraph("Bharat AI-SoC PS5 PCB AOI - Quality Audit Report", title_style))
-        elements.append(Paragraph(f"<b>Board ID:</b> {board_id} | <b>Timestamp:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} | <b>Checkpoint:</b> {event_data.get('checkpoint')}", styles["Normal"]))
-        elements.append(Spacer(1, 12))
-
-        # Alignment & Gate Summary
-        align = event_data.get("alignment", {})
-        align_status = align.get("status", "UNKNOWN")
-        status_color = colors.HexColor("#228B22") if align_status == "PASS" else colors.HexColor("#DC143C")
-
-        summary_data = [
-            ["Metric", "Measured Value", "Tolerance", "Status"],
-            ["Translation dX", f"{align.get('dx_mm', 0.0):.3f} mm", f"<= {align.get('tolerance_dx_mm', 0.15)} mm", align_status],
-            ["Translation dY", f"{align.get('dy_mm', 0.0):.3f} mm", f"<= {align.get('tolerance_dx_mm', 0.15)} mm", align_status],
-            ["Rotation dTheta", f"{align.get('dtheta_deg', 0.0):.3f} deg", f"<= {align.get('tolerance_dtheta_deg', 0.20)} deg", align_status],
-            ["BGA Checklist Gate", "All 4 Gates Passed" if event_data.get("bga_checklist_passed") else "Failed", "100%", "PASS" if event_data.get("bga_checklist_passed") else "FAIL"],
-        ]
-        t_summary = Table(summary_data, colWidths=[140, 130, 130, 100])
-        t_summary.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2B6CB0")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("ALIGN", (1, 1), (-1, -1), "CENTER"),
-        ]))
-        elements.append(t_summary)
-        elements.append(Spacer(1, 16))
+        elements.append(Paragraph("Bharat AI-SoC PS5 PCB AOI — Inspection Report", title_style))
+        elements.append(
+            Paragraph(
+                f"<b>Board / Image:</b> {board_id} | "
+                f"<b>Timestamp:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}<br/>"
+                f"<b>Verdict:</b> {verdict}{vision_str}",
+                styles["Normal"],
+            )
+        )
+        elements.append(Spacer(1, 14))
 
         # Detected Defects Table
-        elements.append(Paragraph("<b>Detected Oriented Micro-Defects</b>", styles["Heading2"]))
-        defects = event_data.get("defects", [])
+        elements.append(Paragraph("<b>Detected Defects (YOLOv8s-OBB)</b>", styles["Heading2"]))
         if defects:
-            defect_rows = [["ID", "Category", "Defect Type", "Component", "Conf", "Severity"]]
+            defect_rows = [["ID", "Category", "Defect Type", "Conf", "Severity", "Angle (deg)"]]
             for d in defects:
+                obb = d.get("obb", {})
                 defect_rows.append([
-                    str(d.get("defect_id")),
+                    str(d.get("defect_id", "")),
                     d.get("category", ""),
                     d.get("type", ""),
-                    d.get("component_ref", ""),
                     f"{d.get('confidence', 0.0):.2f}",
                     d.get("severity", ""),
+                    f"{obb.get('angle_deg', 0.0):.1f}",
                 ])
-            t_defects = Table(defect_rows, colWidths=[30, 110, 140, 120, 50, 70])
+            t_defects = Table(defect_rows, colWidths=[35, 110, 165, 55, 80, 75])
             t_defects.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4A5568")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2B6CB0")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("ALIGN", (4, 1), (-1, -1), "CENTER"),
+                ("ALIGN", (0, 1), (0, -1), "CENTER"),
+                ("ALIGN", (3, 1), (-1, -1), "CENTER"),
             ]))
             elements.append(t_defects)
         else:
-            elements.append(Paragraph("<i>No micro-defects detected. Board conforms to quality standard.</i>", styles["Normal"]))
+            elements.append(Paragraph("<i>No defects detected. Board passed inspection.</i>", styles["Normal"]))
         elements.append(Spacer(1, 16))
 
-        # Closed-Loop Dual Advisories
-        elements.append(Paragraph("<b>Closed-Loop Dual Root-Cause Advisories</b>", styles["Heading2"]))
+        # AI Copilot Advisories
+        elements.append(Paragraph("<b>AI Copilot Advisories (Llama 3.2 1B ExecuTorch)</b>", styles["Heading2"]))
         adv_data = [
-            [Paragraph("<b>Branch 1: CAD / DFM Layout Fix</b>", styles["Normal"])],
+            [Paragraph("<b>CAD / DFM Root-Cause Advisory</b>", styles["Normal"])],
             [Paragraph(dfm_advisory, styles["Normal"])],
-            [Paragraph("<b>Branch 2: SMT / Wire Bonder Calibration Action</b>", styles["Normal"])],
+            [Paragraph("<b>Assembler Corrective Action</b>", styles["Normal"])],
             [Paragraph(asm_advisory, styles["Normal"])],
         ]
         t_adv = Table(adv_data, colWidths=[520])

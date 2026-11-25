@@ -127,25 +127,25 @@ def test_operator_cockpit_app_initialization():
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     app = QApplication.instance() or QApplication(["test_app", "--headless"])
     window = OperatorCockpitApp()
-    assert window.board_id_edit.text() == "OPTIMUS_BGA_REV1_004"
-    assert len(window.current_event.get("defects", [])) == 2
-    assert "B4-B5" in window.dfm_text or "clearance" in window.dfm_text or len(window.dfm_text) > 0
+    assert window.camera_image is None
+    assert "READY" in window.lbl_final_verdict.text()
 
-    # Test dynamic stage gate logic
-    # Default mock event has 2 defects (wire bond & SMT passive)
+    # Load a real sample PCB image and run full inspection cycle
+    sample_img = ROOT_DIR / "data" / "practical_test_samples" / "02_real_insufficient_solder.jpg"
+    window.camera_image = Image.open(sample_img).convert("RGBA")
+    window.current_image_name = sample_img.stem
+    window.canvas.set_camera_frame(window.camera_image)
+    window._run_cycle()
+
+    assert len(window.current_event.get("defects", [])) >= 1
     assert "REWORK REQUIRED" in window.lbl_final_verdict.text()
+    assert "Inspection Cycle Complete" in window.status_banner.text()
+    assert len(window.dfm_text) > 0
+    assert len(window.asm_text) > 0
+    assert window.storage_manager is not None
 
     # Test passing state (0 defects)
-    window._update_stage_gates([])
+    window._update_defect_views([], vision_ms=10.0)
     assert "PASSED (ZERO DEFECTS)" in window.lbl_final_verdict.text()
-
-    # Test Auto-Align CAD
-    window._auto_align_cad()
-    assert "GATE: PASS" in window.align_hud_label.text()
-
-    # Test Run Inspection Cycle execution
-    window._run_cycle()
-    assert "Inspection Cycle Complete" in window.status_bar.currentMessage()
-    assert window.storage_manager is not None
 
     window.close()
