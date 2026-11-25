@@ -71,3 +71,6 @@ audit_reports/
 benchmark_tier0.py
 docs/*.pdf
 *.mp4
+module_a_vision/HANDOFF_MEMBER2.md
+module_a_vision/train_obb.py
+module_a_vision/datasets/
